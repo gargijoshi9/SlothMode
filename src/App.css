@@ -2170,3 +2170,118 @@ button.nav-item {
     padding: 3px;
   }
 }
+
+/* Planning Horizon Selector */
+.horizon-pills-container {
+  display: inline-flex;
+  align-items: center;
+  background: #f0f4ec;
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid #dfe6db;
+}
+
+.horizon-pill {
+  border: none;
+  background: transparent;
+  color: #556752;
+  font: 600 11px Manrope, sans-serif;
+  padding: 6px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all .15s ease;
+  white-space: nowrap;
+}
+
+.horizon-pill:hover:not(.active) {
+  background: #e4ece0;
+  color: #3b4e39;
+}
+
+.horizon-pill.active {
+  background: #55794f;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(85, 121, 79, 0.22);
+}
+
+/* Timeline Date Selector in Day View */
+.timeline-date-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed #e7ece2;
+}
+
+.timeline-date-label {
+  font: 700 10px Manrope, sans-serif;
+  letter-spacing: .8px;
+  color: #8c9584;
+}
+
+.timeline-date-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.timeline-date-chip {
+  border: 1px solid #dce2d6;
+  background: #fff;
+  color: #4b5d48;
+  font: 600 11px Manrope, sans-serif;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.timeline-date-chip:hover {
+  background: #f4f8f1;
+  border-color: #bad0b4;
+}
+
+.timeline-date-chip.active {
+  background: #edf5eb;
+  border-color: #55794f;
+  color: #3f6637;
+  font-weight: 700;
+}
+
+.view-switch-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 12px;
+  border: 1px solid #d3decb;
+  background: #fdfefc;
+  color: #4c6c44;
+  font: 600 11px Manrope, sans-serif;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.view-switch-link-btn:hover {
+  background: #edf5ea;
+  border-color: #9cb992;
+}
+
+/* Time Chip for Planned Tasks in Calendar */
+.cal-time-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #3b6033;
+  background: #edf5ea;
+  border: 1px solid #d5e5cf;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 600;
+}

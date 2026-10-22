@@ -145,6 +145,7 @@ export function ruleBasedFallback(taskTitle, deadline = null, fallbackReason = '
       const now = new Date();
       const diffHours = (d.getTime() - now.getTime()) / (1000 * 60 * 60);
       if (diffHours < 0) {
+        urgency = 'critical';
         dependencyNote = 'Deadline has passed';
       } else if (diffHours <= 24) {
         urgency = 'critical';

@@ -23,13 +23,22 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import "./App.css";
-import type { Task, PlanResponse, HealthStatus, TaskCategory } from "./types";
+import type { Task, PlanResponse, HealthStatus, TaskCategory, PlanningHorizon } from "./types";
 
 function getTodayDateString(): string {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTomorrowDateString(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
@@ -406,6 +415,24 @@ function App() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Planning horizon state: 'today' | 'tomorrow' | 'week' | 'month'
+  const [planningHorizon, setPlanningHorizon] = useState<PlanningHorizon>(() => {
+    try {
+      const saved = localStorage.getItem("slothmode_horizon");
+      if (saved === "today" || saved === "tomorrow" || saved === "week" || saved === "month") {
+        return saved;
+      }
+    } catch {
+      // ignore
+    }
+    return "today";
+  });
+
+  // Selected date for viewing timeline in Day view
+  const [selectedTimelineDate, setSelectedTimelineDate] = useState<string>(() => {
+    return getTodayDateString();
+  });
+
   // Persist tasks in localStorage
   useEffect(() => {
     try {
@@ -414,6 +441,15 @@ function App() {
       console.warn("Failed to persist tasks:", e);
     }
   }, [tasks]);
+
+  // Persist horizon in localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("slothmode_horizon", planningHorizon);
+    } catch (e) {
+      console.warn("Failed to persist horizon:", e);
+    }
+  }, [planningHorizon]);
 
   // Persist plan in localStorage
   useEffect(() => {
@@ -718,6 +754,7 @@ function App() {
         body: JSON.stringify({
           tasks,
           options: {
+            horizon: planningHorizon,
             startHour: 9,
             endHour: 18,
             useCurrentTimeAsStart: isReplan,
@@ -734,6 +771,17 @@ function App() {
 
       const planData: PlanResponse = await res.json();
       setPlan(planData);
+
+      // Focus timeline on the relevant date
+      if (planningHorizon === "tomorrow") {
+        setSelectedTimelineDate(getTomorrowDateString());
+      } else if (planningHorizon === "today") {
+        setSelectedTimelineDate(getTodayDateString());
+      } else if (planData.schedule && planData.schedule.length > 0) {
+        const firstTaskSession = planData.schedule.find((s) => s.type === "task");
+        const targetDate = firstTaskSession?.date || planData.startDate || getTodayDateString();
+        setSelectedTimelineDate(targetDate);
+      }
 
       // Update tasks with AI enriched attributes
       if (Array.isArray(planData.enrichedTasks)) {
@@ -1089,134 +1137,259 @@ function App() {
             </section>
 
             {/* Schedule Timeline Section (Shown once plan is created) */}
-            {plan && (
-              <section className="schedule-section">
-                <div className="schedule-header">
-                  <div>
-                    <p className="eyebrow">YOUR GENTLE TIMELINE</p>
-                    <h2>Today's Pace & Flow</h2>
-                    <p>
-                      Working window: {plan.dayWindow.start} – {plan.dayWindow.end} ·{" "}
-                      {plan.aiStatus?.note}
-                    </p>
-                  </div>
-                  <div className="schedule-meta-chips">
-                    <span className="schedule-chip">
-                      <Clock3 size={13} /> {plan.metrics.totalFocusMinutes}m Focus
-                    </span>
-                    <span className="schedule-chip">
-                      <Coffee size={13} /> {plan.metrics.totalBreakMinutes}m Rest
-                    </span>
-                    <span className="schedule-chip">
-                      <Layers size={13} /> {plan.schedule.length} Sessions
-                    </span>
-                  </div>
-                </div>
+            {plan && (() => {
+              const planDates = Array.from(
+                new Set(
+                  plan.schedule.map(
+                    (i) => i.date || i.scheduledDate || getTodayDateString()
+                  )
+                )
+              ).sort();
 
-                {/* Unscheduled / Overflow explanations if any */}
-                {plan.overflowTasks && plan.overflowTasks.length > 0 && (
-                  <div className="overflow-box">
-                    <div className="overflow-title">
-                      <AlertCircle size={15} />
-                      <span>Tasks needing replanning or overflow:</span>
+              const activeTimelineDate =
+                planDates.includes(selectedTimelineDate)
+                  ? selectedTimelineDate
+                  : planDates[0] || getTodayDateString();
+
+              const displayedScheduleItems = plan.schedule.filter(
+                (item) =>
+                  (item.date || item.scheduledDate || getTodayDateString()) ===
+                  activeTimelineDate
+              );
+
+              const dayFocusMins = displayedScheduleItems
+                .filter((item) => item.type === "task")
+                .reduce((acc, curr) => acc + curr.durationMinutes, 0);
+
+              const dayBreakMins = displayedScheduleItems
+                .filter((item) => item.type === "break")
+                .reduce((acc, curr) => acc + curr.durationMinutes, 0);
+
+              return (
+                <section className="schedule-section">
+                  <div className="schedule-header">
+                    <div>
+                      <p className="eyebrow">YOUR GENTLE TIMELINE</p>
+                      <h2>
+                        {activeTimelineDate === getTodayDateString()
+                          ? "Today"
+                          : activeTimelineDate === getTomorrowDateString()
+                          ? "Tomorrow"
+                          : formatDisplayDate(activeTimelineDate)}
+                        's Pace & Flow
+                      </h2>
+                      <p>
+                        Working window: {plan.dayWindow.start} – {plan.dayWindow.end} ·{" "}
+                        {plan.aiStatus?.note}
+                      </p>
                     </div>
-                    <ul className="overflow-list">
-                      {plan.overflowTasks.map((ot) => (
-                        <li key={ot.taskId}>
-                          <strong>{ot.taskTitle}</strong>: {ot.reason}
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="schedule-meta-chips">
+                      <span className="schedule-chip">
+                        <Clock3 size={13} /> {dayFocusMins}m Focus
+                      </span>
+                      <span className="schedule-chip">
+                        <Coffee size={13} /> {dayBreakMins}m Rest
+                      </span>
+                      <span className="schedule-chip">
+                        <Layers size={13} /> {displayedScheduleItems.length} Sessions
+                      </span>
+                    </div>
                   </div>
-                )}
 
-                <div className="schedule-timeline">
-                  {plan.schedule.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`schedule-item schedule-item-${item.type}`}
-                    >
-                      <div className="item-time-col">
-                        <span className="item-time-range">
-                          {item.start} – {item.end}
-                        </span>
-                        <span className="item-duration">
-                          {item.durationMinutes} min
-                        </span>
+                  {/* Multi-date switch chips when plan covers multiple dates */}
+                  {planDates.length > 1 && (
+                    <div className="timeline-date-selector">
+                      <span className="timeline-date-label">TIMELINE DATE:</span>
+                      <div className="timeline-date-chips">
+                        {planDates.map((dStr) => (
+                          <button
+                            key={dStr}
+                            type="button"
+                            className={`timeline-date-chip ${
+                              dStr === activeTimelineDate ? "active" : ""
+                            }`}
+                            onClick={() => setSelectedTimelineDate(dStr)}
+                          >
+                            {formatDisplayDate(dStr)}
+                          </button>
+                        ))}
                       </div>
+                    </div>
+                  )}
 
-                      <div className="item-content">
-                        <div className="item-header-row">
-                          {item.type === "task" ? (
-                            <h4 className="item-title">{item.title}</h4>
-                          ) : item.type === "break" ? (
-                            <h4 className="item-title" style={{ color: "#4d6b47" }}>
-                              {item.title}
-                            </h4>
-                          ) : (
-                            <h4 className="item-title" style={{ color: "#61685d" }}>
-                              {item.title}
-                            </h4>
-                          )}
+                  {/* Unscheduled / Overflow explanations if any */}
+                  {plan.overflowTasks && plan.overflowTasks.length > 0 && (
+                    <div className="overflow-box">
+                      <div className="overflow-title">
+                        <AlertCircle size={15} />
+                        <span>Tasks needing replanning or overflow:</span>
+                      </div>
+                      <ul className="overflow-list">
+                        {plan.overflowTasks.map((ot) => (
+                          <li key={ot.taskId}>
+                            <strong>{ot.taskTitle}</strong>: {ot.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
-                          {item.partIndex &&
-                            item.totalParts &&
-                            item.totalParts > 1 && (
-                              <span className="item-part-badge">
-                                Part {item.partIndex} of {item.totalParts}
-                              </span>
-                            )}
-
-                          {item.category && (
-                            <span
-                              className="priority priority-low"
-                              style={{ textTransform: "capitalize" }}
-                            >
-                              {item.category.replace("_", " ")}
+                  <div className="schedule-timeline">
+                    {displayedScheduleItems.length === 0 ? (
+                      <div className="cal-empty-state" style={{ padding: "24px 16px" }}>
+                        <p>No focus sessions scheduled for {formatDisplayDate(activeTimelineDate)}.</p>
+                        <span>Rest easy, or pick another date above to view your timeline.</span>
+                      </div>
+                    ) : (
+                      displayedScheduleItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className={`schedule-item schedule-item-${item.type}`}
+                        >
+                          <div className="item-time-col">
+                            <span className="item-time-range">
+                              {item.start} – {item.end}
                             </span>
-                          )}
-
-                          {item.aiGenerated && (
-                            <span
-                              className="ai-tag ai-true"
-                              title="Categorized by local Gemma AI"
-                            >
-                              <Sparkles size={10} /> AI
+                            <span className="item-duration">
+                              {item.durationMinutes} min
                             </span>
-                          )}
+                          </div>
 
-                          {item.deadline && (
-                            <span
-                              className="schedule-deadline-tag"
-                              title="Target completion deadline"
-                            >
-                              Due: {formatDisplayDeadline(item.deadline)}
-                            </span>
-                          )}
+                          <div className="item-content">
+                            <div className="item-header-row">
+                              {item.type === "task" ? (
+                                <h4 className="item-title">{item.title}</h4>
+                              ) : item.type === "break" ? (
+                                <h4
+                                  className="item-title"
+                                  style={{ color: "#4d6b47" }}
+                                >
+                                  {item.title}
+                                </h4>
+                              ) : (
+                                <h4
+                                  className="item-title"
+                                  style={{ color: "#61685d" }}
+                                >
+                                  {item.title}
+                                </h4>
+                              )}
+
+                              {item.partIndex &&
+                                item.totalParts &&
+                                item.totalParts > 1 && (
+                                  <span className="item-part-badge">
+                                    Part {item.partIndex} of {item.totalParts}
+                                  </span>
+                                )}
+
+                              {item.category && (
+                                <span
+                                  className="priority priority-low"
+                                  style={{ textTransform: "capitalize" }}
+                                >
+                                  {item.category.replace("_", " ")}
+                                </span>
+                              )}
+
+                              {item.aiGenerated && (
+                                <span
+                                  className="ai-tag ai-true"
+                                  title="Categorized by local Gemma AI"
+                                >
+                                  <Sparkles size={10} /> AI
+                                </span>
+                              )}
+
+                              {item.deadline && (
+                                <span
+                                  className="schedule-deadline-tag"
+                                  title="Target completion deadline"
+                                >
+                                  Due: {formatDisplayDeadline(item.deadline)}
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="item-desc">
+                              {item.type === "break"
+                                ? "Step away from the screen, stretch, and let your subconscious process what you just did."
+                                : item.schedulingTip ||
+                                  "Focus with zero multitasking during this block."}
+                            </p>
+                          </div>
                         </div>
+                      ))
+                    )}
+                  </div>
 
-                        <p className="item-desc">
-                          {item.type === "break"
-                            ? "Step away from the screen, stretch, and let your subconscious process what you just did."
-                            : item.schedulingTip ||
-                              "Focus with zero multitasking during this block."}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
+                  {plan.horizon === "week" && (
+                    <button
+                      type="button"
+                      className="view-switch-link-btn"
+                      onClick={() => setActiveTab("week")}
+                    >
+                      <Calendar size={13} /> View full week calendar
+                    </button>
+                  )}
+                  {plan.horizon === "month" && (
+                    <button
+                      type="button"
+                      className="view-switch-link-btn"
+                      onClick={() => setActiveTab("month")}
+                    >
+                      <Calendar size={13} /> View full month calendar
+                    </button>
+                  )}
+                </section>
+              );
+            })()}
 
             <section className="tasks-section" id="tasks">
               <div className="tasks-title-row">
                 <div>
                   <p className="eyebrow">SMALL STEPS COUNT</p>
                   <h2>
-                    Today's intentions <span>({tasks.length})</span>
+                    {planningHorizon === "today"
+                      ? "Today's intentions"
+                      : planningHorizon === "tomorrow"
+                      ? "Tomorrow's intentions"
+                      : planningHorizon === "week"
+                      ? "This week's intentions"
+                      : "This month's intentions"}{" "}
+                    <span>({tasks.length})</span>
                   </h2>
                 </div>
                 <div className="plan-actions-group">
+                  {/* Planning Horizon Selector */}
+                  <div
+                    className="horizon-pills-container"
+                    role="radiogroup"
+                    aria-label="Planning Horizon"
+                  >
+                    {(
+                      [
+                        { key: "today", label: "Today" },
+                        { key: "tomorrow", label: "Tomorrow" },
+                        { key: "week", label: "This Week" },
+                        { key: "month", label: "This Month" },
+                      ] as const
+                    ).map((h) => (
+                      <button
+                        key={h.key}
+                        type="button"
+                        className={`horizon-pill ${
+                          planningHorizon === h.key ? "active" : ""
+                        }`}
+                        onClick={() => setPlanningHorizon(h.key)}
+                        aria-checked={planningHorizon === h.key}
+                        role="radio"
+                      >
+                        {h.label}
+                      </button>
+                    ))}
+                  </div>
+
                   {plan && (
                     <button
                       className="replan-button"
@@ -1228,7 +1401,7 @@ function App() {
                         size={15}
                         className={isPlanning ? "loading-spinner" : ""}
                       />
-                      Replan my day
+                      Replan
                     </button>
                   )}
                   <button
@@ -1240,7 +1413,7 @@ function App() {
                       size={17}
                       className={isPlanning ? "loading-spinner" : ""}
                     />
-                    {isPlanning ? "Planning your day..." : "Make my plan"}
+                    {isPlanning ? "Planning..." : "Make my plan"}
                   </button>
                 </div>
               </div>
@@ -1639,9 +1812,30 @@ function App() {
                                 </div>
 
                                 <div className="cal-task-meta">
-                                  <span className="cal-duration-chip">
-                                    <Clock3 size={10} /> {task.duration || 30}m
-                                  </span>
+                                  {(() => {
+                                    const plannedSession = plan?.schedule?.find(
+                                      (item) =>
+                                        item.taskId === task.id &&
+                                        (item.date === dayString ||
+                                          item.scheduledDate === dayString) &&
+                                        item.type === "task"
+                                    );
+                                    if (plannedSession) {
+                                      return (
+                                        <span
+                                          className="cal-time-chip"
+                                          title="Scheduled session time"
+                                        >
+                                          <Clock3 size={10} /> {plannedSession.start} – {plannedSession.end}
+                                        </span>
+                                      );
+                                    }
+                                    return (
+                                      <span className="cal-duration-chip">
+                                        <Clock3 size={10} /> {task.duration || 30}m
+                                      </span>
+                                    );
+                                  })()}
 
                                   <span className="cal-category-tag">
                                     {task.category?.replace("_", " ")}
@@ -2182,9 +2376,30 @@ function App() {
                         </div>
 
                         <div className="cal-task-meta">
-                          <span className="cal-duration-chip">
-                            <Clock3 size={10} /> {task.duration || 30}m
-                          </span>
+                          {(() => {
+                            const plannedSession = plan?.schedule?.find(
+                              (item) =>
+                                item.taskId === task.id &&
+                                (item.date === selectedDayDate ||
+                                  item.scheduledDate === selectedDayDate) &&
+                                item.type === "task"
+                            );
+                            if (plannedSession) {
+                              return (
+                                <span
+                                  className="cal-time-chip"
+                                  title="Scheduled session time"
+                                >
+                                  <Clock3 size={10} /> {plannedSession.start} – {plannedSession.end}
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="cal-duration-chip">
+                                <Clock3 size={10} /> {task.duration || 30}m
+                              </span>
+                            );
+                          })()}
 
                           <span className="cal-category-tag">
                             {task.category?.replace("_", " ")}

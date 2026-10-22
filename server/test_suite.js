@@ -130,12 +130,173 @@ async function runTests() {
   const scheduledItem = multiDayPlan.schedule.find((item) => item.taskId === 30);
   assert(scheduledItem?.scheduledDate === '2026-10-22', 'Scheduled date preserved on schedule item');
 
+  // 10. Planning Horizon: Today
+  console.log('\n--- 10. Testing Planning Horizon: Today ---');
+  const todayTasks = [
+    { id: 40, title: 'Morning study session', duration: 45, done: false },
+    { id: 41, title: 'Future task for next week', duration: 60, scheduledDate: '2026-10-29', done: false },
+  ];
+  const todayPlan = createDailySchedule(todayTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    horizon: 'today',
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(todayPlan.horizon === 'today', 'Horizon metadata reflects today');
+  assert(todayPlan.schedule.some((i) => i.taskId === 40 && i.date === '2026-10-22'), 'Task 40 scheduled for today with date');
+  assert(!todayPlan.schedule.some((i) => i.taskId === 41), 'Future task 41 not scheduled today');
+
+  // 11. Planning Horizon: Tomorrow
+  console.log('\n--- 11. Testing Planning Horizon: Tomorrow ---');
+  const tomorrowTasks = [
+    { id: 50, title: 'Tomorrow prep', duration: 45, done: false },
+    { id: 51, title: 'Task explicitly for tomorrow', duration: 60, scheduledDate: '2026-10-23', done: false },
+    { id: 52, title: 'Task for next week', duration: 60, scheduledDate: '2026-10-29', done: false },
+  ];
+  const tomorrowPlan = createDailySchedule(tomorrowTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    horizon: 'tomorrow',
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(tomorrowPlan.horizon === 'tomorrow', 'Horizon metadata reflects tomorrow');
+  assert(tomorrowPlan.startDate === '2026-10-23', 'Start date is tomorrow');
+  assert(tomorrowPlan.schedule.every((i) => i.date === '2026-10-23'), 'All tomorrow sessions have date 2026-10-23');
+  assert(tomorrowPlan.schedule.some((i) => i.taskId === 50), 'Unscheduled task scheduled tomorrow');
+  assert(tomorrowPlan.schedule.some((i) => i.taskId === 51), 'Tomorrow pinned task scheduled');
+  assert(!tomorrowPlan.schedule.some((i) => i.taskId === 52), 'Future task for next week not scheduled tomorrow');
+
+  // 12. Planning Horizon: This Week
+  console.log('\n--- 12. Testing Planning Horizon: This Week ---');
+  const weekTasks = [
+    { id: 60, title: 'Thursday task', duration: 60, scheduledDate: '2026-10-22', done: false },
+    { id: 61, title: 'Friday task', duration: 45, scheduledDate: '2026-10-23', done: false },
+    { id: 62, title: 'Saturday task', duration: 45, scheduledDate: '2026-10-24', done: false },
+    { id: 63, title: 'Unscheduled flexible task', duration: 45, done: false },
+  ];
+  const weekPlan = createDailySchedule(weekTasks, {
+    currentDate: '2026-10-22T09:00:00', // Thursday
+    horizon: 'week',
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(weekPlan.horizon === 'week', 'Horizon metadata reflects week');
+  assert(weekPlan.schedule.some((i) => i.taskId === 60 && i.date === '2026-10-22'), 'Thursday task placed on Thursday');
+  assert(weekPlan.schedule.some((i) => i.taskId === 61 && i.date === '2026-10-23'), 'Friday task placed on Friday');
+  assert(weekPlan.schedule.some((i) => i.taskId === 62 && i.date === '2026-10-24'), 'Saturday task placed on Saturday');
+  assert(weekPlan.schedule.some((i) => i.taskId === 63), 'Flexible task scheduled in week');
+
+  // 13. Planning Horizon: This Month
+  console.log('\n--- 13. Testing Planning Horizon: This Month ---');
+  const monthTasks = [
+    { id: 70, title: 'Current week task', duration: 60, scheduledDate: '2026-10-22', done: false },
+    { id: 71, title: 'Later this month task', duration: 45, scheduledDate: '2026-10-28', done: false },
+  ];
+  const monthPlan = createDailySchedule(monthTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    horizon: 'month',
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(monthPlan.horizon === 'month', 'Horizon metadata reflects month');
+  assert(monthPlan.schedule.some((i) => i.taskId === 70 && i.date === '2026-10-22'), 'Task 70 scheduled on Oct 22');
+  assert(monthPlan.schedule.some((i) => i.taskId === 71 && i.date === '2026-10-28'), 'Task 71 scheduled on Oct 28');
+
+  // 14. Cross-Day Scheduling & Capacity Rollover
+  console.log('\n--- 14. Testing Cross-Day Scheduling & Rollover ---');
+  const heavyTasks = [
+    // 8h available per day. 4 tasks of 150m each = 600m (10h), exceeds Day 1 capacity
+    { id: 80, title: 'Heavy task 1', duration: 150, done: false },
+    { id: 81, title: 'Heavy task 2', duration: 150, done: false },
+    { id: 82, title: 'Heavy task 3', duration: 150, done: false },
+    { id: 83, title: 'Heavy task 4', duration: 150, done: false },
+  ];
+  const rolloverPlan = createDailySchedule(heavyTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    horizon: 'week',
+    startHour: 9,
+    endHour: 18,
+  });
+  const day1Items = rolloverPlan.schedule.filter((i) => i.date === '2026-10-22' && i.type === 'task');
+  const day2Items = rolloverPlan.schedule.filter((i) => i.date === '2026-10-23' && i.type === 'task');
+  assert(day1Items.length > 0, 'Day 1 received scheduled sessions');
+  assert(day2Items.length > 0, 'Excess tasks rolled over to Day 2');
+  // Check no overlaps within any day
+  let multiDayOverlap = false;
+  const byDate = {};
+  for (const item of rolloverPlan.schedule) {
+    if (!byDate[item.date]) byDate[item.date] = [];
+    byDate[item.date].push(item);
+  }
+  for (const dateStr of Object.keys(byDate)) {
+    const list = byDate[dateStr];
+    for (let k = 0; k < list.length - 1; k++) {
+      if (timeToMinutes(list[k + 1].start) < timeToMinutes(list[k].end)) {
+        multiDayOverlap = true;
+      }
+    }
+  }
+  assert(!multiDayOverlap, 'Zero overlaps found across multi-day schedule');
+
+  // 15. Hard Deadline Enforcement Across Multiple Days
+  console.log('\n--- 15. Testing Hard Deadline Across Days ---');
+  const strictDeadlineTasks = [
+    {
+      id: 90,
+      title: 'Due Friday at 10:00 AM',
+      duration: 120, // Needs 2h. Day starts at 9:00, so ends at 11:00 AM > 10:00 AM deadline on Friday
+      scheduledDate: '2026-10-23',
+      deadline: '2026-10-23T10:00',
+      done: false,
+    },
+  ];
+  const deadlinePlan = createDailySchedule(strictDeadlineTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    horizon: 'week',
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(deadlinePlan.overflowTasks.length === 1, 'Task violating deadline is flagged as overflow');
+  assert(deadlinePlan.overflowTasks[0].reason.includes('past the deadline'), 'Overflow reason mentions deadline');
+
+  // 16. Preservation of Completed Tasks & Pinned Dates
+  console.log('\n--- 16. Testing Completed Tasks & Pinned Dates ---');
+  const pinnedTasks = [
+    { id: 100, title: 'Finished yesterday', duration: 45, done: true, scheduledDate: '2026-10-21' },
+    { id: 101, title: 'Pinned to Friday', duration: 45, done: false, scheduledDate: '2026-10-23' },
+  ];
+  const pinnedPlan = createDailySchedule(pinnedTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    horizon: 'week',
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(pinnedPlan.completedTasks.length === 1, 'Completed task preserved');
+  assert(!pinnedPlan.schedule.some((i) => i.taskId === 100), 'Completed task not scheduled in active timeline');
+  const task101 = pinnedPlan.schedule.find((i) => i.taskId === 101);
+  assert(task101?.date === '2026-10-23', 'Pinned task 101 placed strictly on its scheduled date');
+
+  // 17. Conflict Handling & Overflow Reporting
+  console.log('\n--- 17. Testing Conflict & Overflow Handling ---');
+  const massiveTasks = [];
+  for (let m = 0; m < 20; m++) {
+    massiveTasks.push({ id: 200 + m, title: `Massive task ${m}`, duration: 120, done: false });
+  }
+  const overflowTestPlan = createDailySchedule(massiveTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    horizon: 'tomorrow', // Only 1 day of capacity (~8h = 480m)
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(overflowTestPlan.overflowTasks.length > 0, 'Excess tasks overflowing horizon reported');
+  assert(overflowTestPlan.overflowTasks[0].requestedMinutes === 120, 'Requested minutes specified');
+  assert(typeof overflowTestPlan.overflowTasks[0].reason === 'string', 'Overflow reason provided');
+
   console.log(`\n================================`);
   if (failures === 0) {
-    console.log('🎉 ALL 9 TEST SUITES PASSED FLAWLESSLY!');
+    console.log('🎉 ALL 17 TEST SUITES PASSED FLAWLESSLY!');
   } else {
     console.error(`💥 ${failures} TEST(S) FAILED.`);
-
     process.exit(1);
   }
 }

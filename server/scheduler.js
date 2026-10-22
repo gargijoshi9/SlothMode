@@ -1,5 +1,6 @@
 // server/scheduler.js
-// Deterministic daily scheduler adhering to the Hacktoberfest "Slow and Steady" theme.
+// Deterministic daily and multi-horizon scheduler adhering to the Hacktoberfest "Slow and Steady" theme.
+// Supports Today, Tomorrow, This Week, and This Month planning horizons.
 // Splits tasks into manageable focus sessions, inserts restorative breaks, respects deadlines, and avoids overlaps.
 
 const URGENCY_WEIGHTS = {
@@ -29,13 +30,23 @@ export function timeToMinutes(timeStr) {
 }
 
 /**
+ * Local-time safe date string YYYY-MM-DD.
+ */
+export function toLocalDateString(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
  * Parse a deadline string (ISO timestamp, date string, or HH:mm) into minutes from start of day,
  * or null if no valid deadline is provided.
  */
 export function parseDeadlineToMinutes(deadlineStr, referenceDate = new Date()) {
   if (!deadlineStr) return null;
 
-  // Direct HH:mm match (assumed today's time)
+  // Direct HH:mm match (assumed reference date's time)
   if (/^\d{1,2}:\d{2}$/.test(deadlineStr.trim())) {
     return timeToMinutes(deadlineStr.trim());
   }
@@ -54,6 +65,85 @@ export function parseDeadlineToMinutes(deadlineStr, referenceDate = new Date()) 
   return Math.floor(diffMs / (1000 * 60));
 }
 
+/**
+ * Evaluate if a task's deadline is violated or passed for a specific calendar date and end minute.
+ */
+export function evaluateDeadlineForDate(deadlineStr, targetDateStr, dayEndMinutes = 18 * 60) {
+  if (!deadlineStr || typeof deadlineStr !== 'string') {
+    return {
+      hasDeadline: false,
+      isPastBeforeDay: false,
+      isDeadlineOnDate: false,
+      isViolated: () => false,
+      label: '',
+    };
+  }
+
+  const trimmed = deadlineStr.trim();
+
+  // Format: HH:mm (time of scheduled day)
+  if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
+    const deadlineMinute = timeToMinutes(trimmed);
+    return {
+      hasDeadline: true,
+      isPastBeforeDay: false,
+      isDeadlineOnDate: true,
+      isViolated: (endMin) => endMin > deadlineMinute,
+      label: trimmed,
+      deadlineMinute,
+    };
+  }
+
+  const d = new Date(trimmed);
+  if (isNaN(d.getTime())) {
+    return {
+      hasDeadline: false,
+      isPastBeforeDay: false,
+      isDeadlineOnDate: false,
+      isViolated: () => false,
+      label: trimmed,
+    };
+  }
+
+  const deadlineDateStr = toLocalDateString(d);
+  const hasTimeComponent = /T\d{1,2}:\d{2}|\s\d{1,2}:\d{2}/.test(trimmed);
+  const deadlineMinute = hasTimeComponent ? d.getHours() * 60 + d.getMinutes() : dayEndMinutes;
+  const label = trimmed.replace('T', ' ');
+
+  if (targetDateStr > deadlineDateStr) {
+    // Target date is strictly after deadline date
+    return {
+      hasDeadline: true,
+      isPastBeforeDay: true,
+      isDeadlineOnDate: false,
+      isViolated: () => true,
+      label,
+      deadlineMinute,
+    };
+  }
+
+  if (targetDateStr < deadlineDateStr) {
+    // Target date is strictly before deadline date
+    return {
+      hasDeadline: true,
+      isPastBeforeDay: false,
+      isDeadlineOnDate: false,
+      isViolated: () => false,
+      label,
+      deadlineMinute,
+    };
+  }
+
+  // Same day as deadline
+  return {
+    hasDeadline: true,
+    isPastBeforeDay: false,
+    isDeadlineOnDate: true,
+    isViolated: (endMin) => endMin > deadlineMinute,
+    label,
+    deadlineMinute,
+  };
+}
 
 /**
  * Sort tasks deterministically by urgency, deadline proximity, and duration.
@@ -85,29 +175,62 @@ export function sortTasksForScheduling(tasks, referenceDate = new Date()) {
 }
 
 /**
- * Create a deterministic daily schedule.
+ * Create a deterministic schedule across the selected planning horizon:
+ * 'today' | 'tomorrow' | 'week' | 'month'.
  *
  * @param {Array} tasks - List of task objects
- * @param {Object} options - Scheduling preferences
+ * @param {Object} options - Scheduling preferences including horizon, currentDate, working hours
  * @returns {Object} Complete schedule result with timeline items, metrics, and overflow report
  */
 export function createDailySchedule(tasks = [], options = {}) {
   const referenceDate = options.currentDate ? new Date(options.currentDate) : new Date();
+  const todayStr = toLocalDateString(referenceDate);
+  const horizon = options.horizon || 'today';
+
+  // 1. Determine horizon calendar days (all dates local-time safe YYYY-MM-DD)
+  let horizonDays = [];
+
+  if (horizon === 'tomorrow') {
+    const tom = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() + 1);
+    horizonDays = [toLocalDateString(tom)];
+  } else if (horizon === 'week') {
+    const dayOfWeek = referenceDate.getDay();
+    const diffToMonday = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
+    const monday = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() + diffToMonday);
+    const weekDays = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      weekDays.push(toLocalDateString(d));
+    }
+    // Schedule across days in this week on or after today
+    horizonDays = weekDays.filter((d) => d >= todayStr);
+    if (horizonDays.length === 0) {
+      horizonDays = [todayStr];
+    }
+  } else if (horizon === 'month') {
+    const year = referenceDate.getFullYear();
+    const month = referenceDate.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const monthDays = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dObj = new Date(year, month, d);
+      monthDays.push(toLocalDateString(dObj));
+    }
+    horizonDays = monthDays.filter((d) => d >= todayStr);
+    if (horizonDays.length === 0) {
+      horizonDays = [todayStr];
+    }
+  } else {
+    // Default 'today'
+    horizonDays = [todayStr];
+  }
+
+  const firstHorizonDay = horizonDays[0];
+  const lastHorizonDay = horizonDays[horizonDays.length - 1];
 
   // Working window (in minutes from midnight)
   const startHour = Number(options.startHour ?? 9); // default 9:00 AM
-  const endHour = Number(options.endHour ?? 18); // default 6:00 PM
-  let dayStart = startHour * 60;
-  const dayEnd = endHour * 60;
-
-  // If scheduling later in the day, start from current time rounded up to nearest 5 mins
-  if (options.useCurrentTimeAsStart) {
-    const nowMinutes = referenceDate.getHours() * 60 + referenceDate.getMinutes();
-    const roundedNow = Math.ceil(nowMinutes / 5) * 5;
-    if (roundedNow > dayStart && roundedNow < dayEnd) {
-      dayStart = roundedNow;
-    }
-  }
+  const endHour = Number(options.endHour ?? 18);     // default 6:00 PM
 
   // Max session length before splitting (default 45 mins - gentle productivity)
   const maxSessionMinutes = Number(options.maxSessionMinutes ?? 45);
@@ -128,220 +251,318 @@ export function createDailySchedule(tasks = [], options = {}) {
     .filter((b) => b.end > b.start)
     .sort((a, b) => a.start - b.start);
 
-  // Separate completed and pending tasks
-  const completedTasks = tasks.filter((t) => t.done);
-  const pendingTasks = tasks.filter((t) => !t.done);
-
-  // Sort pending tasks
-  const sortedPending = sortTasksForScheduling(pendingTasks, referenceDate);
-
-  const schedule = [];
-  const overflowTasks = [];
-
-  // Track cursor in minutes from midnight
-  let cursor = dayStart;
-  let consecutiveFocusMinutes = 0;
-
-  // Insert any blocked intervals that occur before dayStart or record them
-  // We'll advance cursor through time, honoring blocked commitments
   function advanceThroughBlocked(currentCursor) {
     let nextCursor = currentCursor;
     for (const block of blockedIntervals) {
       if (nextCursor >= block.start && nextCursor < block.end) {
-        // We collided with a blocked interval
         nextCursor = block.end;
       }
     }
     return nextCursor;
   }
 
-  // First pass: add blocked commitments to the schedule timeline if within working day
-  const timelineEvents = [];
-  for (const block of blockedIntervals) {
-    if (block.end > dayStart && block.start < dayEnd) {
-      const actualStart = Math.max(dayStart, block.start);
-      const actualEnd = Math.min(dayEnd, block.end);
-      timelineEvents.push({
-        id: `blocked-${block.start}`,
-        type: 'blocked',
-        title: block.title,
-        start: minutesToTime(actualStart),
-        end: minutesToTime(actualEnd),
-        durationMinutes: actualEnd - actualStart,
-        startMin: actualStart,
-        endMin: actualEnd,
-      });
+  // 2. Separate completed and pending tasks
+  const completedTasks = tasks.filter((t) => t.done);
+  const pendingTasks = tasks.filter((t) => !t.done);
+
+  // 3. Classify pending tasks:
+  // - Future tasks outside this horizon: leave un-scheduled for now, do not move or overflow
+  // - Pinned tasks: task.scheduledDate is within horizonDays
+  // - Flexible tasks: unscheduled or past-due tasks that can be placed on an available horizon day
+  const pinnedByDay = {};
+  for (const day of horizonDays) {
+    pinnedByDay[day] = [];
+  }
+
+  const flexibleTasks = [];
+
+  for (const task of pendingTasks) {
+    const sDate = task.scheduledDate ? task.scheduledDate.trim() : null;
+    if (sDate && sDate > lastHorizonDay) {
+      // Future task outside this horizon. Never schedule before its selected scheduledDate!
+      continue;
+    }
+    if (sDate && horizonDays.includes(sDate)) {
+      pinnedByDay[sDate].push(task);
+    } else {
+      flexibleTasks.push(task);
     }
   }
 
-  // Iterate over sorted pending tasks
-  for (const task of sortedPending) {
-    const rawDuration = Number(task.duration || task.estimatedMinutes || 30);
-    const totalDuration = Math.min(480, Math.max(5, rawDuration));
-    const deadlineMin = parseDeadlineToMinutes(task.deadline, referenceDate);
+  // Sort flexible tasks so urgent and tight-deadline tasks get assigned earlier in the horizon
+  const flexibleQueue = sortTasksForScheduling(flexibleTasks, referenceDate);
 
-    // Split into sessions if exceeds maxSessionMinutes
-    const partsCount = Math.ceil(totalDuration / maxSessionMinutes);
-    const sessionDurations = [];
-    let remaining = totalDuration;
-    for (let i = 0; i < partsCount; i++) {
-      const dur = Math.min(remaining, maxSessionMinutes);
-      sessionDurations.push(dur);
-      remaining -= dur;
+  const allScheduleItems = [];
+  const overflowTasks = [];
+  const newlyScheduledTaskDates = new Map();
+
+  // 4. Iterate through each day in the horizon
+  for (const dayStr of horizonDays) {
+    let dayStart = startHour * 60;
+    const dayEnd = endHour * 60;
+
+    // If scheduling today later in the day, start from current time rounded up to nearest 5 mins
+    if (dayStr === todayStr && options.useCurrentTimeAsStart) {
+      const nowMinutes = referenceDate.getHours() * 60 + referenceDate.getMinutes();
+      const roundedNow = Math.ceil(nowMinutes / 5) * 5;
+      if (roundedNow > dayStart && roundedNow < dayEnd) {
+        dayStart = roundedNow;
+      }
     }
 
-    let taskFullyScheduled = true;
-    const taskSessions = [];
+    // Blocked commitments for this day
+    const dayTimelineEvents = [];
+    for (const block of blockedIntervals) {
+      if (block.end > dayStart && block.start < dayEnd) {
+        const actualStart = Math.max(dayStart, block.start);
+        const actualEnd = Math.min(dayEnd, block.end);
+        dayTimelineEvents.push({
+          id: `blocked-${dayStr}-${block.start}`,
+          type: 'blocked',
+          title: block.title,
+          date: dayStr,
+          scheduledDate: dayStr,
+          start: minutesToTime(actualStart),
+          end: minutesToTime(actualEnd),
+          durationMinutes: actualEnd - actualStart,
+          startMin: actualStart,
+          endMin: actualEnd,
+        });
+      }
+    }
 
-    for (let partIdx = 0; partIdx < sessionDurations.length; partIdx++) {
-      const sessionDuration = sessionDurations[partIdx];
+    let cursor = dayStart;
+    let consecutiveFocusMinutes = 0;
+    const daySchedule = [];
 
-      // Jump over any blocked interval
-      cursor = advanceThroughBlocked(cursor);
+    // Helper to attempt placing a task onto dayStr
+    function tryScheduleTaskOnDay(task, isPinned) {
+      const rawDuration = Number(task.duration || task.estimatedMinutes || 30);
+      const totalDuration = Math.min(480, Math.max(5, rawDuration));
 
-      // Check if session can fit before next blocked interval or end of day
-      let nextBlockedStart = dayEnd;
-      for (const block of blockedIntervals) {
-        if (block.start > cursor && block.start < nextBlockedStart) {
-          nextBlockedStart = block.start;
-        }
+      const deadlineInfo = evaluateDeadlineForDate(task.deadline, dayStr, dayEnd);
+      if (deadlineInfo.isPastBeforeDay) {
+        return {
+          success: false,
+          cannotFitEver: true,
+          reason: `Deadline (${deadlineInfo.label}) passed before ${dayStr}`,
+          requestedMinutes: totalDuration,
+          remainingUnscheduledMinutes: totalDuration,
+        };
       }
 
-      const availableSpan = nextBlockedStart - cursor;
+      // Session splitting
+      const partsCount = Math.ceil(totalDuration / maxSessionMinutes);
+      const sessionDurations = [];
+      let remaining = totalDuration;
+      for (let i = 0; i < partsCount; i++) {
+        const dur = Math.min(remaining, maxSessionMinutes);
+        sessionDurations.push(dur);
+        remaining -= dur;
+      }
 
-      if (availableSpan < sessionDuration || cursor + sessionDuration > dayEnd) {
-        // Cannot fit in current slot; try jumping past the next blocked interval if before dayEnd
-        if (nextBlockedStart < dayEnd) {
-          cursor = advanceThroughBlocked(nextBlockedStart);
-          const postBlockedSpan = dayEnd - cursor;
-          if (postBlockedSpan < sessionDuration || cursor + sessionDuration > dayEnd) {
-            taskFullyScheduled = false;
-            overflowTasks.push({
-              taskId: task.id,
-              taskTitle: task.title,
-              reason: `Not enough time left in today's working hours (day ends at ${minutesToTime(dayEnd)})`,
-              requestedMinutes: totalDuration,
-              remainingUnscheduledMinutes: sessionDurations
-                .slice(partIdx)
-                .reduce((a, b) => a + b, 0),
-            });
+      let simCursor = cursor;
+      let simConsecutive = consecutiveFocusMinutes;
+      const plannedSessions = [];
+      let fits = true;
+      let failureReason = '';
+      let cannotFitEver = false;
+      let remainingUnscheduled = totalDuration;
+
+      for (let partIdx = 0; partIdx < sessionDurations.length; partIdx++) {
+        const sessionDuration = sessionDurations[partIdx];
+        simCursor = advanceThroughBlocked(simCursor);
+
+        let nextBlockedStart = dayEnd;
+        for (const block of blockedIntervals) {
+          if (block.start > simCursor && block.start < nextBlockedStart) {
+            nextBlockedStart = block.start;
+          }
+        }
+
+        const availableSpan = nextBlockedStart - simCursor;
+        if (availableSpan < sessionDuration || simCursor + sessionDuration > dayEnd) {
+          if (nextBlockedStart < dayEnd) {
+            simCursor = advanceThroughBlocked(nextBlockedStart);
+            const postSpan = dayEnd - simCursor;
+            if (postSpan < sessionDuration || simCursor + sessionDuration > dayEnd) {
+              fits = false;
+              failureReason = `Not enough time left in working hours on ${dayStr} (day ends at ${minutesToTime(dayEnd)})`;
+              remainingUnscheduled = sessionDurations.slice(partIdx).reduce((a, b) => a + b, 0);
+              break;
+            }
+          } else {
+            fits = false;
+            failureReason = `Exceeds available working hours on ${dayStr} (ends at ${minutesToTime(dayEnd)})`;
+            remainingUnscheduled = sessionDurations.slice(partIdx).reduce((a, b) => a + b, 0);
             break;
           }
-        } else {
-          // Exceeds dayEnd
-          taskFullyScheduled = false;
-          overflowTasks.push({
-            taskId: task.id,
-            taskTitle: task.title,
-            reason: `Exceeds available working hours (ends at ${minutesToTime(dayEnd)})`,
-            requestedMinutes: totalDuration,
-            remainingUnscheduledMinutes: sessionDurations
-              .slice(partIdx)
-              .reduce((a, b) => a + b, 0),
-          });
+        }
+
+        const sessionEndMin = simCursor + sessionDuration;
+        if (deadlineInfo.isViolated(sessionEndMin)) {
+          fits = false;
+          failureReason = `Session would finish at ${minutesToTime(sessionEndMin)}, which is past the deadline (${deadlineInfo.label})`;
+          if (deadlineInfo.isDeadlineOnDate) {
+            cannotFitEver = true;
+          }
+          remainingUnscheduled = sessionDurations.slice(partIdx).reduce((a, b) => a + b, 0);
           break;
         }
-      }
 
-      // Check deadline constraint
-      const sessionEndMin = cursor + sessionDuration;
-      if (deadlineMin !== null && sessionEndMin > deadlineMin) {
-        taskFullyScheduled = false;
-        const deadlineLabel =
-          task.deadline && !/^\d{1,2}:\d{2}$/.test(task.deadline)
-            ? task.deadline.replace('T', ' ')
-            : minutesToTime(deadlineMin);
-
-        overflowTasks.push({
-          taskId: task.id,
-          taskTitle: task.title,
-          reason: `Session would finish at ${minutesToTime(sessionEndMin)}, which is past the deadline (${deadlineLabel})`,
-          requestedMinutes: totalDuration,
-          remainingUnscheduledMinutes: sessionDurations
-            .slice(partIdx)
-            .reduce((a, b) => a + b, 0),
-        });
-        break;
-      }
-
-      // Schedule this focus session
-      const sessionStart = cursor;
-      const sessionEnd = sessionStart + sessionDuration;
-
-      const sessionTitle =
-        partsCount > 1
+        const sessionStart = simCursor;
+        const sessionEnd = sessionStart + sessionDuration;
+        const sessionTitle = partsCount > 1
           ? `${task.title} (Part ${partIdx + 1}/${partsCount})`
           : task.title;
 
-      taskSessions.push({
-        id: `sched-${task.id}-part-${partIdx + 1}`,
-        type: 'task',
-        taskId: task.id,
-        title: sessionTitle,
-        parentTitle: task.title,
-        category: task.category || 'personal',
-        urgency: task.urgency || 'medium',
-        partIndex: partIdx + 1,
-        totalParts: partsCount,
-        start: minutesToTime(sessionStart),
-        end: minutesToTime(sessionEnd),
-        startMin: sessionStart,
-        endMin: sessionEnd,
-        durationMinutes: sessionDuration,
-        done: Boolean(task.done),
-        subtasks: task.subtasks || task.suggestedSubtasks || [],
-        schedulingTip: task.schedulingTip,
-        aiGenerated: task.aiGenerated ?? false,
-        deadline: task.deadline || null,
-        scheduledDate: task.scheduledDate || null,
-      });
+        plannedSessions.push({
+          id: `sched-${task.id}-${dayStr}-part-${partIdx + 1}`,
+          type: 'task',
+          taskId: task.id,
+          title: sessionTitle,
+          parentTitle: task.title,
+          category: task.category || 'personal',
+          urgency: task.urgency || 'medium',
+          partIndex: partIdx + 1,
+          totalParts: partsCount,
+          date: dayStr,
+          scheduledDate: dayStr,
+          start: minutesToTime(sessionStart),
+          end: minutesToTime(sessionEnd),
+          startMin: sessionStart,
+          endMin: sessionEnd,
+          durationMinutes: sessionDuration,
+          done: Boolean(task.done),
+          subtasks: task.subtasks || task.suggestedSubtasks || [],
+          schedulingTip: task.schedulingTip,
+          aiGenerated: task.aiGenerated ?? false,
+          deadline: task.deadline || null,
+        });
 
+        simCursor = sessionEnd;
+        simConsecutive += sessionDuration;
 
-      cursor = sessionEnd;
-      consecutiveFocusMinutes += sessionDuration;
+        // Sloth pause between sessions if before dayEnd
+        if (simCursor < dayEnd) {
+          simCursor = advanceThroughBlocked(simCursor);
+          const isLongBreak = simConsecutive >= 90;
+          const breakDuration = isLongBreak ? longBreakMinutes : shortBreakMinutes;
+          const breakTitle = isLongBreak
+            ? '🍃 Mindful Sloth Pause (Deep rest & stretch)'
+            : '🍵 Gentle Break (Hydrate & rest your eyes)';
 
-      // Add gentle break between sessions if before dayEnd
-      if (cursor < dayEnd) {
-        cursor = advanceThroughBlocked(cursor);
+          if (simCursor + breakDuration <= dayEnd) {
+            plannedSessions.push({
+              id: `break-${dayStr}-${simCursor}`,
+              type: 'break',
+              title: breakTitle,
+              date: dayStr,
+              scheduledDate: dayStr,
+              start: minutesToTime(simCursor),
+              end: minutesToTime(simCursor + breakDuration),
+              startMin: simCursor,
+              endMin: simCursor + breakDuration,
+              durationMinutes: breakDuration,
+            });
+            simCursor += breakDuration;
+            if (isLongBreak) simConsecutive = 0;
+          }
+        }
+      }
 
-        // Decide break length: longer break if worked >= 90 mins, else short break
-        const isLongBreak = consecutiveFocusMinutes >= 90;
-        const breakDuration = isLongBreak ? longBreakMinutes : shortBreakMinutes;
-        const breakTitle = isLongBreak
-          ? '🍃 Mindful Sloth Pause (Deep rest & stretch)'
-          : '🍵 Gentle Break (Hydrate & rest your eyes)';
+      if (!fits) {
+        return {
+          success: false,
+          cannotFitEver,
+          reason: failureReason,
+          requestedMinutes: totalDuration,
+          remainingUnscheduledMinutes: remainingUnscheduled,
+        };
+      }
 
-        if (cursor + breakDuration <= dayEnd) {
-          taskSessions.push({
-            id: `break-${cursor}`,
-            type: 'break',
-            title: breakTitle,
-            start: minutesToTime(cursor),
-            end: minutesToTime(cursor + breakDuration),
-            startMin: cursor,
-            endMin: cursor + breakDuration,
-            durationMinutes: breakDuration,
+      // Commit to day timeline
+      cursor = simCursor;
+      consecutiveFocusMinutes = simConsecutive;
+      daySchedule.push(...plannedSessions);
+      return { success: true };
+    }
+
+    // Step A: Schedule tasks pinned to this date
+    const pinnedDayTasks = sortTasksForScheduling(pinnedByDay[dayStr] || [], new Date(dayStr + 'T00:00:00'));
+    for (const task of pinnedDayTasks) {
+      const res = tryScheduleTaskOnDay(task, true);
+      if (!res.success) {
+        overflowTasks.push({
+          taskId: task.id,
+          taskTitle: task.title,
+          reason: res.reason || `Cannot fit on scheduled date ${dayStr}`,
+          requestedMinutes: res.requestedMinutes,
+          remainingUnscheduledMinutes: res.remainingUnscheduledMinutes,
+        });
+      } else {
+        newlyScheduledTaskDates.set(task.id, dayStr);
+      }
+    }
+
+    // Step B: Fill remaining day capacity with flexible tasks
+    let i = 0;
+    while (i < flexibleQueue.length) {
+      const task = flexibleQueue[i];
+      const res = tryScheduleTaskOnDay(task, false);
+      if (res.success) {
+        newlyScheduledTaskDates.set(task.id, dayStr);
+        flexibleQueue.splice(i, 1);
+      } else {
+        if (res.cannotFitEver) {
+          overflowTasks.push({
+            taskId: task.id,
+            taskTitle: task.title,
+            reason: res.reason || `Cannot fit before deadline`,
+            requestedMinutes: res.requestedMinutes,
+            remainingUnscheduledMinutes: res.remainingUnscheduledMinutes,
           });
-          cursor += breakDuration;
-          if (isLongBreak) consecutiveFocusMinutes = 0;
+          flexibleQueue.splice(i, 1);
+        } else {
+          // Leave in queue to attempt placing on next day
+          i++;
         }
       }
     }
 
-    if (taskFullyScheduled) {
-      schedule.push(...taskSessions);
-    }
+    // Combine day items with blocked commitments, sort chronologically
+    const allDayItems = [...daySchedule, ...dayTimelineEvents].sort((a, b) => a.startMin - b.startMin);
+    allScheduleItems.push(...allDayItems);
   }
 
-  // Combine task/break sessions and blocked commitments, then sort chronologically
-  const allTimelineItems = [...schedule, ...timelineEvents].sort(
-    (a, b) => a.startMin - b.startMin
-  );
+  // 5. Any flexible tasks that could not fit across any day in the horizon
+  for (const task of flexibleQueue) {
+    const rawDuration = Number(task.duration || task.estimatedMinutes || 30);
+    const totalDuration = Math.min(480, Math.max(5, rawDuration));
+    overflowTasks.push({
+      taskId: task.id,
+      taskTitle: task.title,
+      reason: `Could not fit within available working hours across the selected horizon (${horizon})`,
+      requestedMinutes: totalDuration,
+      remainingUnscheduledMinutes: totalDuration,
+    });
+  }
 
   // Clean internal tracking fields (startMin, endMin)
-  const cleanTimeline = allTimelineItems.map(({ startMin, endMin, ...item }) => item);
+  const cleanTimeline = allScheduleItems.map(({ startMin, endMin, ...item }) => item);
 
-  // Calculate statistics
+  // Update enrichedTasks so scheduled tasks carry their assigned calendar date
+  const finalEnrichedTasks = tasks.map((t) => {
+    if (newlyScheduledTaskDates.has(t.id)) {
+      return {
+        ...t,
+        scheduledDate: newlyScheduledTaskDates.get(t.id),
+      };
+    }
+    return t;
+  });
+
+  // Calculate metrics
   const totalFocusMinutes = cleanTimeline
     .filter((item) => item.type === 'task')
     .reduce((acc, curr) => acc + curr.durationMinutes, 0);
@@ -356,10 +577,13 @@ export function createDailySchedule(tasks = [], options = {}) {
 
   return {
     success: true,
+    horizon,
+    startDate: firstHorizonDay,
+    endDate: lastHorizonDay,
     dayWindow: {
-      start: minutesToTime(dayStart),
-      end: minutesToTime(dayEnd),
-      totalAvailableMinutes: dayEnd - dayStart,
+      start: minutesToTime(startHour * 60),
+      end: minutesToTime(endHour * 60),
+      totalAvailableMinutes: (endHour - startHour) * 60,
     },
     metrics: {
       totalTasks: tasks.length,
@@ -372,5 +596,8 @@ export function createDailySchedule(tasks = [], options = {}) {
     schedule: cleanTimeline,
     overflowTasks,
     completedTasks,
+    enrichedTasks: finalEnrichedTasks,
   };
 }
+
+export const createSchedule = createDailySchedule;

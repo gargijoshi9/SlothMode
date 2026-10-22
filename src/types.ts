@@ -26,10 +26,13 @@ export type Task = {
   fallbackReason?: string;
 };
 
+export type PlanningHorizon = 'today' | 'tomorrow' | 'week' | 'month';
+
 export type ScheduleItem = {
   id: string;
   type: 'task' | 'break' | 'blocked';
   taskId?: number;
+  date?: string; // YYYY-MM-DD
   title: string;
   parentTitle?: string;
   category?: string;
@@ -67,6 +70,9 @@ export type ScheduleMetrics = {
 
 export type PlanResponse = {
   success: boolean;
+  horizon?: PlanningHorizon;
+  startDate?: string;
+  endDate?: string;
   dayWindow: {
     start: string;
     end: string;
