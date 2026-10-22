@@ -20,6 +20,90 @@ import {
 import "./App.css";
 import type { Task, PlanResponse, HealthStatus } from "./types";
 
+function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDate(dateStr?: string | null): string {
+  if (!dateStr) return "";
+  try {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    if (!y || !m || !d) return dateStr;
+    const target = new Date(y, m - 1, d);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (target.getTime() === today.getTime()) {
+      return "Today";
+    }
+    if (target.getTime() === tomorrow.getTime()) {
+      return "Tomorrow";
+    }
+    return target.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
+function formatDisplayDeadline(deadlineStr?: string | null): string {
+  if (!deadlineStr) return "";
+  const trimmed = deadlineStr.trim();
+  if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  try {
+    const d = new Date(trimmed);
+    if (isNaN(d.getTime())) return trimmed;
+
+    const today = new Date();
+    const isSameYear = d.getFullYear() === today.getFullYear();
+    const isToday =
+      d.getDate() === today.getDate() &&
+      d.getMonth() === today.getMonth() &&
+      isSameYear;
+
+    const timeStr = d.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    if (isToday) {
+      return `Today, ${timeStr}`;
+    }
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrow =
+      d.getDate() === tomorrow.getDate() &&
+      d.getMonth() === tomorrow.getMonth() &&
+      d.getFullYear() === tomorrow.getFullYear();
+
+    if (isTomorrow) {
+      return `Tomorrow, ${timeStr}`;
+    }
+
+    const dateStr = d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: isSameYear ? undefined : "numeric",
+    });
+
+    return `${dateStr} at ${timeStr}`;
+  } catch {
+    return deadlineStr;
+  }
+}
+
 const initialTasks: Task[] = [
   {
     id: 1,
@@ -29,6 +113,7 @@ const initialTasks: Task[] = [
     priority: "High",
     urgency: "high",
     done: false,
+    scheduledDate: getTodayDateString(),
     deadline: null,
     subtasks: [
       { id: "sub-1-1", title: "Review process scheduling algorithms (20m)", done: false },
@@ -46,6 +131,7 @@ const initialTasks: Task[] = [
     priority: "High",
     urgency: "high",
     done: false,
+    scheduledDate: getTodayDateString(),
     deadline: null,
     subtasks: [
       { id: "sub-2-1", title: "Review problem statement and rubric", done: false },
@@ -63,6 +149,7 @@ const initialTasks: Task[] = [
     priority: "Medium",
     urgency: "medium",
     done: false,
+    scheduledDate: getTodayDateString(),
     deadline: null,
     subtasks: [
       { id: "sub-3-1", title: "Read latest discussion thread", done: false },
@@ -74,11 +161,20 @@ const initialTasks: Task[] = [
 ];
 
 function App() {
-  // Load tasks from localStorage or initial state
+  // Load tasks from localStorage or initial state, safely handling legacy data
   const [tasks, setTasks] = useState<Task[]>(() => {
     try {
       const saved = localStorage.getItem("slothmode_tasks");
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: Task[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.map((t) => ({
+            ...t,
+            scheduledDate: t.scheduledDate || null,
+            deadline: t.deadline || null,
+          }));
+        }
+      }
     } catch {
       // ignore
     }
@@ -97,6 +193,7 @@ function App() {
   });
 
   const [draft, setDraft] = useState("");
+  const [draftScheduledDate, setDraftScheduledDate] = useState(getTodayDateString);
   const [draftDeadline, setDraftDeadline] = useState("");
   const [showDeadlineInput, setShowDeadlineInput] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
@@ -112,6 +209,7 @@ function App() {
       console.warn("Failed to persist tasks:", e);
     }
   }, [tasks]);
+
 
   // Persist plan in localStorage
   useEffect(() => {
@@ -194,6 +292,7 @@ function App() {
       priority: "Medium",
       urgency: "medium",
       done: false,
+      scheduledDate: draftScheduledDate || getTodayDateString(),
       deadline: draftDeadline.trim() || null,
       subtasks: [
         {
@@ -215,6 +314,7 @@ function App() {
     setDraft("");
     setDraftDeadline("");
     setShowDeadlineInput(false);
+
   }
 
   function toggleTask(id: number) {
@@ -428,38 +528,79 @@ function App() {
             </div>
           </div>
           <form className="task-form" onSubmit={addTask}>
-            <div className="task-form-row" style={{ flex: 1 }}>
+            <div className="task-form-main">
               <input
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 placeholder="e.g. Study OS, finish assignment, call a friend..."
                 aria-label="Describe a task"
               />
-              {showDeadlineInput && (
-                <input
-                  type="text"
-                  className="deadline-input"
-                  value={draftDeadline}
-                  onChange={(e) => setDraftDeadline(e.target.value)}
-                  placeholder="Deadline (e.g. 17:00)"
-                  aria-label="Optional deadline time"
-                />
-              )}
+              <button type="submit" className="add-button">
+                <Plus size={18} /> Add task
+              </button>
             </div>
-            <button
-              type="button"
-              className="replan-button"
-              style={{ minHeight: "44px" }}
-              onClick={() => setShowDeadlineInput((v) => !v)}
-              title="Add deadline"
-            >
-              <Calendar size={15} />
-              {showDeadlineInput ? "Hide deadline" : "+ Deadline"}
-            </button>
-            <button type="submit" className="add-button">
-              <Plus size={18} /> Add task
-            </button>
+
+            <div className="task-form-options">
+              {/* Schedule Date field */}
+              <div className="task-option-item">
+                <label className="option-label" htmlFor="task-schedule-date">
+                  <Calendar size={14} className="option-icon" />
+                  <span>Schedule date:</span>
+                </label>
+                <input
+                  id="task-schedule-date"
+                  type="date"
+                  className="date-picker-input"
+                  value={draftScheduledDate}
+                  onChange={(e) => setDraftScheduledDate(e.target.value)}
+                  aria-label="Date you plan to work on this task"
+                />
+              </div>
+
+              {/* Deadline field (optional) */}
+              <div className="task-option-item">
+                {!showDeadlineInput ? (
+                  <button
+                    type="button"
+                    className="toggle-deadline-btn"
+                    onClick={() => setShowDeadlineInput(true)}
+                    title="Add an optional completion deadline"
+                  >
+                    <Clock3 size={14} />
+                    <span>+ Add deadline</span>
+                  </button>
+                ) : (
+                  <div className="deadline-input-group">
+                    <label className="option-label" htmlFor="task-deadline-datetime">
+                      <Clock3 size={14} className="option-icon" />
+                      <span>Deadline:</span>
+                    </label>
+                    <input
+                      id="task-deadline-datetime"
+                      type="datetime-local"
+                      className="datetime-picker-input"
+                      value={draftDeadline}
+                      onChange={(e) => setDraftDeadline(e.target.value)}
+                      aria-label="Task deadline date and time"
+                    />
+                    <button
+                      type="button"
+                      className="clear-deadline-btn"
+                      onClick={() => {
+                        setDraftDeadline("");
+                        setShowDeadlineInput(false);
+                      }}
+                      title="Remove deadline"
+                      aria-label="Remove deadline"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </form>
+
           <p className="hint">
             <Sparkles size={14} /> Local AI breaks down your tasks and schedules calm breaks.
           </p>
@@ -597,7 +738,14 @@ function App() {
                           <Sparkles size={10} /> AI
                         </span>
                       )}
+
+                      {item.deadline && (
+                        <span className="schedule-deadline-tag" title="Target completion deadline">
+                          Due: {formatDisplayDeadline(item.deadline)}
+                        </span>
+                      )}
                     </div>
+
 
                     <p className="item-desc">
                       {item.type === "break"
@@ -700,14 +848,23 @@ function App() {
                           <span>
                             <Clock3 size={13} /> {task.duration || 30} min
                           </span>
-                          {task.deadline && (
+                          {task.scheduledDate && (
                             <>
                               <span className="meta-dot">·</span>
-                              <span>
-                                <Calendar size={13} /> Due: {task.deadline}
+                              <span className="task-schedule-badge" title="Date you plan to work on this task">
+                                <Calendar size={13} /> Plan: {formatDisplayDate(task.scheduledDate)}
                               </span>
                             </>
                           )}
+                          {task.deadline && (
+                            <>
+                              <span className="meta-dot">·</span>
+                              <span className="task-deadline-badge" title="Target completion deadline">
+                                <Clock3 size={13} /> Due: {formatDisplayDeadline(task.deadline)}
+                              </span>
+                            </>
+                          )}
+
                           {subtasks.length > 0 && (
                             <>
                               <span className="meta-dot">·</span>

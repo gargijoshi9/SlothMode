@@ -35,7 +35,7 @@ export function timeToMinutes(timeStr) {
 export function parseDeadlineToMinutes(deadlineStr, referenceDate = new Date()) {
   if (!deadlineStr) return null;
 
-  // Direct HH:mm match
+  // Direct HH:mm match (assumed today's time)
   if (/^\d{1,2}:\d{2}$/.test(deadlineStr.trim())) {
     return timeToMinutes(deadlineStr.trim());
   }
@@ -43,24 +43,17 @@ export function parseDeadlineToMinutes(deadlineStr, referenceDate = new Date()) 
   const d = new Date(deadlineStr);
   if (isNaN(d.getTime())) return null;
 
-  // If deadline is on the same day as referenceDate, return deadline time in minutes
-  const isSameDay =
-    d.getFullYear() === referenceDate.getFullYear() &&
-    d.getMonth() === referenceDate.getMonth() &&
-    d.getDate() === referenceDate.getDate();
+  const startOfRefDay = new Date(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    referenceDate.getDate(),
+    0, 0, 0, 0
+  );
 
-  if (isSameDay) {
-    return d.getHours() * 60 + d.getMinutes();
-  }
-
-  // If deadline is in the past
-  if (d < referenceDate) {
-    return 0; // Already past
-  }
-
-  // If deadline is on a future day, deadline is after today's working window
-  return 24 * 60;
+  const diffMs = d.getTime() - startOfRefDay.getTime();
+  return Math.floor(diffMs / (1000 * 60));
 }
+
 
 /**
  * Sort tasks deterministically by urgency, deadline proximity, and duration.
@@ -254,10 +247,15 @@ export function createDailySchedule(tasks = [], options = {}) {
       const sessionEndMin = cursor + sessionDuration;
       if (deadlineMin !== null && sessionEndMin > deadlineMin) {
         taskFullyScheduled = false;
+        const deadlineLabel =
+          task.deadline && !/^\d{1,2}:\d{2}$/.test(task.deadline)
+            ? task.deadline.replace('T', ' ')
+            : minutesToTime(deadlineMin);
+
         overflowTasks.push({
           taskId: task.id,
           taskTitle: task.title,
-          reason: `Session would finish at ${minutesToTime(sessionEndMin)}, which is past the deadline (${minutesToTime(deadlineMin)})`,
+          reason: `Session would finish at ${minutesToTime(sessionEndMin)}, which is past the deadline (${deadlineLabel})`,
           requestedMinutes: totalDuration,
           remainingUnscheduledMinutes: sessionDurations
             .slice(partIdx)
@@ -295,7 +293,9 @@ export function createDailySchedule(tasks = [], options = {}) {
         schedulingTip: task.schedulingTip,
         aiGenerated: task.aiGenerated ?? false,
         deadline: task.deadline || null,
+        scheduledDate: task.scheduledDate || null,
       });
+
 
       cursor = sessionEnd;
       consecutiveFocusMinutes += sessionDuration;

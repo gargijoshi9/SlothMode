@@ -659,26 +659,141 @@ a {
 }
 
 /* Form extensions */
-.task-form-row {
+.task-form {
   display: flex;
-  gap: 8px;
-  align-items: center;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.deadline-input {
-  max-width: 135px;
-  border: 1px solid #e6e9e0;
-  border-radius: 10px;
-  padding: 12px 10px;
-  color: #5f6b5b;
+.task-form-main {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.task-form-main input {
+  min-width: 0;
+  flex: 1;
+}
+
+.task-form-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 2px 0;
+}
+
+.task-option-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.option-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6d7769;
+  letter-spacing: .2px;
+}
+
+.option-icon {
+  color: #6f9566;
+}
+
+.date-picker-input,
+.datetime-picker-input {
+  border: 1px solid #e1e5dc;
+  border-radius: 9px;
+  padding: 8px 10px;
+  color: #29382e;
   background: #fdfdfa;
   font-size: 11px;
+  font-family: inherit;
   outline: none;
+  transition: border-color .15s ease;
 }
 
-.deadline-input:focus {
-  border-color: #92b38a;
+.date-picker-input:focus,
+.datetime-picker-input:focus {
+  border-color: #8bb282;
+  box-shadow: 0 0 0 2px #eef5eb;
 }
+
+.toggle-deadline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px dashed #ced7c7;
+  border-radius: 9px;
+  background: #fff;
+  color: #557250;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 7px 11px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.toggle-deadline-btn:hover {
+  background: #f4f8f1;
+  border-color: #9cb993;
+}
+
+.deadline-input-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: #fafbf8;
+  padding: 2px 6px 2px 2px;
+  border-radius: 10px;
+  border: 1px solid #ebeee6;
+}
+
+.clear-deadline-btn {
+  background: transparent;
+  border: none;
+  color: #9ea597;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 5px;
+  line-height: 1;
+}
+
+.clear-deadline-btn:hover {
+  color: #b94b39;
+  background: #faece5;
+}
+
+.task-deadline-badge {
+  color: #ba6d4c;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.task-schedule-badge {
+  color: #5d7559;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.schedule-deadline-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #b96b4b;
+  background: #fbf1ec;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+
 
 /* Task details & subtasks */
 .task-row-container {

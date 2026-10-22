@@ -18,7 +18,8 @@ export type Task = {
   urgency?: 'critical' | 'high' | 'medium' | 'low';
   done: boolean;
   subtasks?: Subtask[];
-  deadline?: string | null;
+  scheduledDate?: string | null; // YYYY-MM-DD
+  deadline?: string | null;      // ISO string or YYYY-MM-DDTHH:mm or HH:mm
   dependencyNote?: string | null;
   schedulingTip?: string;
   aiGenerated?: boolean;
@@ -42,8 +43,10 @@ export type ScheduleItem = {
   subtasks?: Subtask[];
   schedulingTip?: string;
   aiGenerated?: boolean;
+  scheduledDate?: string | null;
   deadline?: string | null;
 };
+
 
 export type OverflowTask = {
   taskId: number;

@@ -108,11 +108,34 @@ async function runTests() {
   assert(replanResult.schedule.some((item) => item.taskId === 2), 'Pending task scheduled');
   assert(!replanResult.schedule.some((item) => item.taskId === 1), 'Completed task not re-scheduled into active timeline');
 
+  // 9. Multi-day deadline & Scheduled Date
+  console.log('\n--- 9. Testing Multi-Day Deadline & Schedule Date ---');
+  const multiDayTasks = [
+    {
+      id: 30,
+      title: 'Lab assignment due in 3 days',
+      duration: 45,
+      scheduledDate: '2026-10-22',
+      deadline: '2026-10-25T14:00',
+      done: false,
+    },
+  ];
+  const multiDayPlan = createDailySchedule(multiDayTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(multiDayPlan.overflowTasks.length === 0, 'Multi-day future deadline does not overflow today');
+  assert(multiDayPlan.schedule.some((item) => item.taskId === 30), 'Task successfully scheduled');
+  const scheduledItem = multiDayPlan.schedule.find((item) => item.taskId === 30);
+  assert(scheduledItem?.scheduledDate === '2026-10-22', 'Scheduled date preserved on schedule item');
+
   console.log(`\n================================`);
   if (failures === 0) {
-    console.log('🎉 ALL 8 TEST SUITES PASSED FLAWLESSLY!');
+    console.log('🎉 ALL 9 TEST SUITES PASSED FLAWLESSLY!');
   } else {
     console.error(`💥 ${failures} TEST(S) FAILED.`);
+
     process.exit(1);
   }
 }

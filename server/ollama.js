@@ -144,15 +144,21 @@ export function ruleBasedFallback(taskTitle, deadline = null, fallbackReason = '
     if (!isNaN(d.getTime())) {
       const now = new Date();
       const diffHours = (d.getTime() - now.getTime()) / (1000 * 60 * 60);
-      if (diffHours <= 24) {
+      if (diffHours < 0) {
+        dependencyNote = 'Deadline has passed';
+      } else if (diffHours <= 24) {
         urgency = 'critical';
         dependencyNote = 'Deadline is today or within 24 hours';
       } else if (diffHours < 48) {
         urgency = urgency === 'low' ? 'medium' : 'high';
         dependencyNote = 'Deadline is approaching within 48 hours';
+      } else {
+        const dateFormatted = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        dependencyNote = `Target deadline: ${dateFormatted}`;
       }
     }
   }
+
 
 
   return {
