@@ -85,6 +85,97 @@ function formatWeekHeading(mondayDate: Date): string {
   return `${monMonth} ${mondayDate.getDate()}, ${mondayDate.getFullYear()} – ${sunMonth} ${sundayDate.getDate()}, ${sundayDate.getFullYear()}`;
 }
 
+function formatMonthHeading(date: Date): string {
+  return date.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+interface MonthGridCell {
+  date: Date;
+  dateString: string;
+  dayNumber: number;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+}
+
+function getMonthGrid(displayedMonthDate: Date): MonthGridCell[] {
+  const year = displayedMonthDate.getFullYear();
+  const month = displayedMonthDate.getMonth();
+
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Day of week: 0 = Sun, 1 = Mon, ..., 6 = Sat
+  // We want Monday as first column (0), Sunday as last column (6)
+  const dayOfWeek = firstDay.getDay();
+  const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+
+  const todayStr = getTodayDateString();
+  const cells: MonthGridCell[] = [];
+
+  // Previous month filler days
+  const prevMonthDaysCount = new Date(year, month, 0).getDate();
+  for (let i = mondayOffset - 1; i >= 0; i--) {
+    const dayNum = prevMonthDaysCount - i;
+    const cellDate = new Date(year, month - 1, dayNum);
+    const dateString = toLocalDateString(cellDate);
+    cells.push({
+      date: cellDate,
+      dateString,
+      dayNumber: dayNum,
+      isCurrentMonth: false,
+      isToday: dateString === todayStr,
+    });
+  }
+
+  // Current month days
+  for (let d = 1; d <= daysInMonth; d++) {
+    const cellDate = new Date(year, month, d);
+    const dateString = toLocalDateString(cellDate);
+    cells.push({
+      date: cellDate,
+      dateString,
+      dayNumber: d,
+      isCurrentMonth: true,
+      isToday: dateString === todayStr,
+    });
+  }
+
+  // Next month filler days to complete 7-day rows
+  const remaining = (7 - (cells.length % 7)) % 7;
+  for (let i = 1; i <= remaining; i++) {
+    const cellDate = new Date(year, month + 1, i);
+    const dateString = toLocalDateString(cellDate);
+    cells.push({
+      date: cellDate,
+      dateString,
+      dayNumber: i,
+      isCurrentMonth: false,
+      isToday: dateString === todayStr,
+    });
+  }
+
+  return cells;
+}
+
+function formatDayDetailHeading(dateStr: string): string {
+  try {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    if (!y || !m || !d) return dateStr;
+    const date = new Date(y, m - 1, d);
+    return date.toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return dateStr;
+  }
+}
+
 function isTaskOverdue(task: Task, now = new Date()): boolean {
   if (task.done || !task.deadline) return false;
   const trimmed = task.deadline.trim();
@@ -231,8 +322,8 @@ const initialTasks: Task[] = [
 ];
 
 function App() {
-  // Navigation tab: 'day' | 'week'
-  const [activeTab, setActiveTab] = useState<"day" | "week">("day");
+  // Navigation tab: 'day' | 'week' | 'month'
+  const [activeTab, setActiveTab] = useState<"day" | "week" | "month">("day");
 
   // Load tasks from localStorage or initial state, safely handling legacy data
   const [tasks, setTasks] = useState<Task[]>(() => {
@@ -275,6 +366,18 @@ function App() {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
     getMondayOfWeek(new Date())
   );
+
+  // Month navigation state
+  const [currentMonthDate, setCurrentMonthDate] = useState<Date>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
+  // Selected date for day detail panel in month view
+  const [selectedDayDate, setSelectedDayDate] = useState<string | null>(null);
+
+  // Selected unscheduled task ID in Day Detail dropdown
+  const [selectedUnscheduledTaskId, setSelectedUnscheduledTaskId] = useState<number | "">("");
 
   // Task editing modal state
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -494,6 +597,35 @@ function App() {
     setCurrentWeekStart(getMondayOfWeek(new Date()));
   }
 
+  // Month navigation functions
+  function prevMonth() {
+    setCurrentMonthDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
+  }
+
+  function nextMonth() {
+    setCurrentMonthDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
+  }
+
+  function goToCurrentMonth() {
+    const now = new Date();
+    setCurrentMonthDate(new Date(now.getFullYear(), now.getMonth(), 1));
+  }
+
+  function scheduleTaskToDate(taskId: number, dateStr: string) {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, scheduledDate: dateStr } : t))
+    );
+    setPlan((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        schedule: prev.schedule.map((item) =>
+          item.taskId === taskId ? { ...item, scheduledDate: dateStr } : item
+        ),
+      };
+    });
+  }
+
   // Task edit modal handlers
   function openEditTask(task: Task) {
     setEditingTask(task);
@@ -637,6 +769,24 @@ function App() {
     (t) => !t.scheduledDate || t.scheduledDate.trim() === ""
   );
 
+  // Monthly calculations for the displayed month
+  const monthYear = currentMonthDate.getFullYear();
+  const monthMonthNum = String(currentMonthDate.getMonth() + 1).padStart(2, "0");
+  const monthPrefix = `${monthYear}-${monthMonthNum}`;
+
+  const monthTasks = tasks.filter(
+    (t) => t.scheduledDate && t.scheduledDate.startsWith(monthPrefix)
+  );
+  const monthTotalMinutes = monthTasks.reduce(
+    (sum, t) => sum + (t.duration || 30),
+    0
+  );
+  const monthCompletedCount = monthTasks.filter((t) => t.done).length;
+  const monthRemainingCount = monthTasks.filter((t) => !t.done).length;
+  const monthOverdueCount = monthTasks.filter((t) => isTaskOverdue(t)).length;
+
+  const monthGridCells = getMonthGrid(currentMonthDate);
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -663,6 +813,13 @@ function App() {
           onClick={() => setActiveTab("week")}
         >
           <Calendar size={18} /> Week view
+        </button>
+        <button
+          type="button"
+          className={`nav-item ${activeTab === "month" ? "active" : ""}`}
+          onClick={() => setActiveTab("month")}
+        >
+          <Calendar size={18} /> Month view
         </button>
         <button
           type="button"
@@ -708,6 +865,13 @@ function App() {
               onClick={() => setActiveTab("week")}
             >
               Week view
+            </button>
+            <button
+              type="button"
+              className={`pill-btn ${activeTab === "month" ? "active" : ""}`}
+              onClick={() => setActiveTab("month")}
+            >
+              Month view
             </button>
           </div>
 
@@ -1598,6 +1762,508 @@ function App() {
               </section>
             )}
           </section>
+        )}
+
+        {/* ========================================================= */}
+        {/* MONTH VIEW                                                */}
+        {/* ========================================================= */}
+        {activeTab === "month" && (
+          <section className="month-view-container">
+            {/* Month Navigation & Heading */}
+            <div className="week-nav-bar">
+              <div className="week-heading-group">
+                <h2>{formatMonthHeading(currentMonthDate)}</h2>
+                <p>
+                  Plan ahead at a relaxed pace. Click any day to see or schedule tasks.
+                </p>
+              </div>
+
+              <div className="week-controls">
+                <button
+                  type="button"
+                  className="week-nav-btn"
+                  onClick={prevMonth}
+                  title="Previous month"
+                >
+                  <ChevronLeft size={16} /> Previous
+                </button>
+                <button
+                  type="button"
+                  className="week-nav-btn today-btn"
+                  onClick={goToCurrentMonth}
+                  title="Go to current month"
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  className="week-nav-btn"
+                  onClick={nextMonth}
+                  title="Next month"
+                >
+                  Next <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Monthly Summary Statistics */}
+            <div className="week-summary-grid">
+              <div className="week-stat-card">
+                <div className="week-stat-header">
+                  <span className="week-stat-label">PLANNED EFFORT</span>
+                  <span
+                    className="week-stat-icon"
+                    style={{ background: "#edf5eb", color: "#446c3d" }}
+                  >
+                    <Clock3 size={15} />
+                  </span>
+                </div>
+                <strong>
+                  {Math.floor(monthTotalMinutes / 60)}h{" "}
+                  {monthTotalMinutes % 60 > 0 ? `${monthTotalMinutes % 60}m` : ""}
+                </strong>
+                <span className="week-stat-sub">
+                  {monthTasks.length} {monthTasks.length === 1 ? "task" : "tasks"} planned this month
+                </span>
+              </div>
+
+              <div className="week-stat-card">
+                <div className="week-stat-header">
+                  <span className="week-stat-label">COMPLETED</span>
+                  <span
+                    className="week-stat-icon"
+                    style={{ background: "#e8f4ed", color: "#367a55" }}
+                  >
+                    <CheckCircle2 size={15} />
+                  </span>
+                </div>
+                <strong>{monthCompletedCount}</strong>
+                <span className="week-stat-sub">
+                  {monthTasks.length > 0
+                    ? `${Math.round((monthCompletedCount / monthTasks.length) * 100)}% completed`
+                    : "No tasks scheduled"}
+                </span>
+              </div>
+
+              <div className="week-stat-card">
+                <div className="week-stat-header">
+                  <span className="week-stat-label">REMAINING</span>
+                  <span
+                    className="week-stat-icon"
+                    style={{ background: "#fbf3e6", color: "#9c6b24" }}
+                  >
+                    <Coffee size={15} />
+                  </span>
+                </div>
+                <strong>{monthRemainingCount}</strong>
+                <span className="week-stat-sub">Gentle progress ahead</span>
+              </div>
+
+              <div
+                className={`week-stat-card ${
+                  monthOverdueCount > 0 ? "alert-card" : ""
+                }`}
+              >
+                <div className="week-stat-header">
+                  <span className="week-stat-label">OVERDUE</span>
+                  <span
+                    className="week-stat-icon"
+                    style={{
+                      background: monthOverdueCount > 0 ? "#fdeee9" : "#f5f6f3",
+                      color: monthOverdueCount > 0 ? "#ba4c3a" : "#8f9689",
+                    }}
+                  >
+                    <AlertTriangle size={15} />
+                  </span>
+                </div>
+                <strong
+                  className={monthOverdueCount > 0 ? "overdue-count" : ""}
+                >
+                  {monthOverdueCount}
+                </strong>
+                <span className="week-stat-sub">
+                  {monthOverdueCount > 0
+                    ? "Requires gentle attention"
+                    : "All deadlines on track"}
+                </span>
+              </div>
+            </div>
+
+            {/* Calendar Grid: Mon to Sun */}
+            <div className="month-calendar-grid-wrapper">
+              <div className="month-calendar-header-row">
+                {["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"].map(
+                  (dayName) => (
+                    <div key={dayName} className="month-day-heading">
+                      {dayName}
+                    </div>
+                  )
+                )}
+              </div>
+
+              <div className="month-calendar-grid">
+                {monthGridCells.map((cell) => {
+                  const dayTasks = tasks.filter(
+                    (t) => t.scheduledDate === cell.dateString
+                  );
+                  const previewTasks = dayTasks.slice(0, 2);
+                  const overflowCount = dayTasks.length - 2;
+
+                  return (
+                    <div
+                      key={cell.dateString}
+                      className={`month-date-cell ${
+                        !cell.isCurrentMonth ? "not-current-month" : ""
+                      } ${cell.isToday ? "is-today" : ""}`}
+                      onClick={() => setSelectedDayDate(cell.dateString)}
+                      title={`Click to view and schedule tasks for ${cell.dateString}`}
+                    >
+                      <div className="month-cell-header">
+                        <span className="month-cell-num">{cell.dayNumber}</span>
+                        {cell.isToday && (
+                          <span className="month-cell-today-pill">Today</span>
+                        )}
+                      </div>
+
+                      <div className="month-cell-tasks">
+                        {previewTasks.map((t) => (
+                          <div
+                            key={t.id}
+                            className={`month-task-pill ${
+                              t.done ? "task-done" : ""
+                            }`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditTask(t);
+                            }}
+                            title={`Edit: ${t.title} (${t.duration || 30}m)`}
+                          >
+                            <span className="month-task-dot" />
+                            <span>{t.title}</span>
+                          </div>
+                        ))}
+
+                        {overflowCount > 0 && (
+                          <span className="month-more-badge">
+                            +{overflowCount} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Unscheduled Tasks Section */}
+            {unscheduledTasks.length > 0 && (
+              <section className="unscheduled-shelf">
+                <div className="unscheduled-header">
+                  <div>
+                    <h3>
+                      <span>🌿</span>
+                      <span>
+                        Unscheduled Intentions ({unscheduledTasks.length})
+                      </span>
+                    </h3>
+                    <p>
+                      These tasks don't have a scheduled date yet. Pick a date or click to schedule.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="unscheduled-grid">
+                  {unscheduledTasks.map((task) => (
+                    <div
+                      key={task.id}
+                      className={`cal-task-card ${
+                        task.done ? "task-done" : ""
+                      }`}
+                      onClick={() => openEditTask(task)}
+                      title="Click to schedule or edit this task"
+                    >
+                      <div className="cal-task-top">
+                        <button
+                          type="button"
+                          className={`cal-task-check ${
+                            task.done ? "checked" : ""
+                          }`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleTask(task.id);
+                          }}
+                          aria-label={
+                            task.done ? "Mark incomplete" : "Mark complete"
+                          }
+                        >
+                          {task.done && <Check size={12} />}
+                        </button>
+                        <h4 className="cal-task-title">{task.title}</h4>
+                      </div>
+
+                      <div className="cal-task-meta">
+                        <span className="cal-duration-chip">
+                          <Clock3 size={10} /> {task.duration || 30}m
+                        </span>
+
+                        <span className="cal-category-tag">
+                          {task.category?.replace("_", " ")}
+                        </span>
+
+                        {task.deadline && (
+                          <span className="cal-deadline-tag">
+                            Due {formatDisplayDeadline(task.deadline)}
+                          </span>
+                        )}
+
+                        <span
+                          style={{
+                            marginLeft: "auto",
+                            fontSize: "9px",
+                            color: "#5b7d53",
+                            fontWeight: 600,
+                          }}
+                        >
+                          + Set date
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: "8px",
+                          paddingTop: "6px",
+                          borderTop: "1px dashed #e7ebe1",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span style={{ fontSize: "10px", color: "#7a8575" }}>
+                          Quick schedule:
+                        </span>
+                        <input
+                          type="date"
+                          style={{
+                            fontSize: "11px",
+                            padding: "2px 6px",
+                            borderRadius: "6px",
+                            border: "1px solid #d7ded2",
+                            background: "#fff",
+                            color: "#29382e",
+                          }}
+                          value={task.scheduledDate || ""}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              scheduleTaskToDate(task.id, e.target.value);
+                            }
+                          }}
+                          title="Schedule this task to a date"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </section>
+        )}
+
+        {/* ========================================================= */}
+        {/* DAY DETAIL PANEL MODAL                                    */}
+        {/* ========================================================= */}
+        {selectedDayDate && (
+          <div
+            className="modal-backdrop"
+            onClick={() => setSelectedDayDate(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="day-detail-title"
+          >
+            <div
+              className="day-detail-card"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="day-detail-header">
+                <div>
+                  <h3 id="day-detail-title">
+                    {formatDayDetailHeading(selectedDayDate)}
+                  </h3>
+                  <p className="day-detail-sub">
+                    {(() => {
+                      const dayTasks = tasks.filter(
+                        (t) => t.scheduledDate === selectedDayDate
+                      );
+                      const totalMins = dayTasks.reduce(
+                        (s, t) => s + (t.duration || 30),
+                        0
+                      );
+                      const doneCount = dayTasks.filter((t) => t.done).length;
+                      return `${dayTasks.length} ${
+                        dayTasks.length === 1 ? "task" : "tasks"
+                      } • ${Math.floor(totalMins / 60)}h ${
+                        totalMins % 60
+                      }m planned • ${doneCount} completed`;
+                    })()}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={() => setSelectedDayDate(null)}
+                  aria-label="Close day detail"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Day Tasks List */}
+              <div className="day-detail-task-list">
+                {(() => {
+                  const dayTasks = tasks.filter(
+                    (t) => t.scheduledDate === selectedDayDate
+                  );
+                  if (dayTasks.length === 0) {
+                    return (
+                      <div className="cal-empty-state">
+                        <p>No tasks scheduled for this day yet.</p>
+                        <span>Take it slow, or schedule an unscheduled task below.</span>
+                      </div>
+                    );
+                  }
+                  return dayTasks.map((task) => {
+                    const overdue = isTaskOverdue(task);
+                    return (
+                      <div
+                        key={task.id}
+                        className={`cal-task-card ${
+                          task.done ? "task-done" : ""
+                        }`}
+                        onClick={() => openEditTask(task)}
+                        title="Click to edit task details"
+                      >
+                        <div className="cal-task-top">
+                          <button
+                            type="button"
+                            className={`cal-task-check ${
+                              task.done ? "checked" : ""
+                            }`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleTask(task.id);
+                            }}
+                            aria-label={
+                              task.done
+                                ? "Mark incomplete"
+                                : "Mark complete"
+                            }
+                          >
+                            {task.done && <Check size={12} />}
+                          </button>
+                          <h4 className="cal-task-title">{task.title}</h4>
+                          <button
+                            type="button"
+                            style={{
+                              marginLeft: "auto",
+                              background: "none",
+                              border: "none",
+                              color: "#84907e",
+                              cursor: "pointer",
+                              padding: "2px",
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditTask(task);
+                            }}
+                            title="Edit task"
+                          >
+                            <Edit3 size={13} />
+                          </button>
+                        </div>
+
+                        <div className="cal-task-meta">
+                          <span className="cal-duration-chip">
+                            <Clock3 size={10} /> {task.duration || 30}m
+                          </span>
+
+                          <span className="cal-category-tag">
+                            {task.category?.replace("_", " ")}
+                          </span>
+
+                          {task.deadline && (
+                            <span
+                              className={`cal-deadline-tag ${
+                                overdue ? "is-overdue" : ""
+                              }`}
+                            >
+                              {overdue && <AlertTriangle size={9} />}
+                              Due {formatDisplayDeadline(task.deadline)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Day Detail Actions */}
+              <div className="day-detail-actions">
+                {/* Schedule an unscheduled task to this day */}
+                {unscheduledTasks.length > 0 && (
+                  <div className="day-schedule-select-row">
+                    <select
+                      value={selectedUnscheduledTaskId}
+                      onChange={(e) =>
+                        setSelectedUnscheduledTaskId(
+                          e.target.value ? Number(e.target.value) : ""
+                        )
+                      }
+                      aria-label="Select an unscheduled task"
+                    >
+                      <option value="">
+                        -- Schedule an unscheduled task here --
+                      </option>
+                      {unscheduledTasks.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title} ({t.duration || 30}m)
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="day-schedule-btn"
+                      disabled={!selectedUnscheduledTaskId}
+                      onClick={() => {
+                        if (selectedUnscheduledTaskId) {
+                          scheduleTaskToDate(
+                            Number(selectedUnscheduledTaskId),
+                            selectedDayDate
+                          );
+                          setSelectedUnscheduledTaskId("");
+                        }
+                      }}
+                    >
+                      Schedule here
+                    </button>
+                  </div>
+                )}
+
+                {/* Add a new task for this day */}
+                <button
+                  type="button"
+                  className="col-quick-add-btn"
+                  onClick={() => {
+                    quickAddForDate(selectedDayDate);
+                    setSelectedDayDate(null);
+                  }}
+                  title="Plan a task for this date in Day view"
+                >
+                  <Plus size={14} /> Add new task for this day
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* ========================================================= */}

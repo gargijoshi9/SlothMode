@@ -1781,6 +1781,244 @@ button.nav-item {
   }
 }
 
+/* Month View Layout & Grid */
+.month-view-container {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.month-calendar-header-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(130px, 1fr));
+  gap: 6px;
+  min-width: 910px;
+  padding: 0 4px;
+}
+
+.month-day-heading {
+  text-align: center;
+  font: 700 11px Manrope, sans-serif;
+  letter-spacing: .6px;
+  color: #72826c;
+  padding: 4px 0;
+}
+
+.month-calendar-grid-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.month-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(130px, 1fr));
+  gap: 6px;
+  min-width: 910px;
+}
+
+.month-date-cell {
+  background: #fff;
+  border: 1px solid #eaede5;
+  border-radius: 12px;
+  padding: 8px 8px;
+  min-height: 108px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.month-date-cell:hover {
+  border-color: #8db382;
+  box-shadow: 0 4px 12px rgba(41, 56, 46, 0.05);
+  transform: translateY(-1px);
+}
+
+.month-date-cell.not-current-month {
+  background: #fbfbf9;
+  opacity: .5;
+}
+
+.month-date-cell.is-today {
+  border-color: #6e9c64;
+  box-shadow: 0 0 0 1.5px #6e9c64;
+  background: #fcfdfb;
+}
+
+.month-cell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.month-cell-num {
+  font: 700 12px Manrope, sans-serif;
+  color: #29382e;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.month-date-cell.is-today .month-cell-num {
+  background: #55794f;
+  color: #fff;
+}
+
+.month-cell-today-pill {
+  font-size: 9px;
+  font-weight: 700;
+  color: #55794f;
+  background: #edf5ea;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.month-cell-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.month-task-pill {
+  font-size: 10px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: #f4f7f1;
+  color: #2b3d2e;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #e3e9de;
+  cursor: pointer;
+  transition: all .1s ease;
+  overflow: hidden;
+}
+
+.month-task-pill:hover {
+  background: #e9f1e4;
+  border-color: #8eb583;
+}
+
+.month-task-pill.task-done {
+  text-decoration: line-through;
+  opacity: .6;
+}
+
+.month-task-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #658c5a;
+  flex-shrink: 0;
+}
+
+.month-task-pill span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.month-more-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: #51744b;
+  background: #edf5ea;
+  padding: 2px 6px;
+  border-radius: 4px;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+/* Day Detail Modal/Panel */
+.day-detail-card {
+  background: #fff;
+  border-radius: 18px;
+  width: 100%;
+  max-width: 540px;
+  padding: 24px;
+  box-shadow: 0 20px 40px rgba(25, 41, 30, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.day-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eef1eb;
+}
+
+.day-detail-header h3 {
+  font: 700 18px Manrope, sans-serif;
+  margin: 0 0 3px;
+  color: #29382e;
+}
+
+.day-detail-sub {
+  font-size: 12px;
+  color: #8c9384;
+  margin: 0;
+}
+
+.day-detail-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.day-detail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid #eef1eb;
+}
+
+.day-schedule-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.day-schedule-select-row select {
+  flex: 1;
+  border: 1px solid #e1e6db;
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 11px;
+  background: #fcfdfa;
+  color: #29382e;
+}
+
+.day-schedule-btn {
+  border: none;
+  background: #edf4e9;
+  color: #436a3d;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.day-schedule-btn:hover {
+  background: #dfedd8;
+}
+
+
 
 
 
