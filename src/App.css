@@ -2285,3 +2285,113 @@ button.nav-item {
   border-radius: 4px;
   font-weight: 600;
 }
+
+/* Plan Feedback Banner */
+.plan-feedback-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 18px;
+  border-radius: 12px;
+  margin-bottom: 18px;
+  font-size: 13.5px;
+  font-weight: 500;
+  animation: feedbackSlideIn 0.25s ease-out;
+}
+
+.plan-feedback-banner.success {
+  background: #edf5ea;
+  border: 1px solid #c9dec2;
+  color: #275220;
+}
+
+.plan-feedback-banner.error {
+  background: #fdf0ed;
+  border: 1px solid #f2cfc7;
+  color: #a83d2c;
+}
+
+.plan-feedback-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.plan-feedback-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.65;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.plan-feedback-dismiss:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+@keyframes feedbackSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.col-header {
+  transition: background 0.15s ease;
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.col-header:hover {
+  background: rgba(220, 235, 215, 0.5);
+}
+
+.view-timeline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #edf5ea;
+  color: #385d30;
+  border: 1px solid #c6ddbe;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.view-timeline-btn:hover {
+  background: #ddead7;
+  border-color: #accda2;
+}
+
+.chip-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: #476a3e;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 4px;
+  margin-left: 5px;
+}
+
+.timeline-date-chip.active .chip-count-badge {
+  background: #ffffff;
+  color: #274720;
+}

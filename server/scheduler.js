@@ -202,11 +202,8 @@ export function createDailySchedule(tasks = [], options = {}) {
       const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
       weekDays.push(toLocalDateString(d));
     }
-    // Schedule across days in this week on or after today
-    horizonDays = weekDays.filter((d) => d >= todayStr);
-    if (horizonDays.length === 0) {
-      horizonDays = [todayStr];
-    }
+    // Full current week: Monday through Sunday
+    horizonDays = weekDays;
   } else if (horizon === 'month') {
     const year = referenceDate.getFullYear();
     const month = referenceDate.getMonth();
@@ -216,10 +213,8 @@ export function createDailySchedule(tasks = [], options = {}) {
       const dObj = new Date(year, month, d);
       monthDays.push(toLocalDateString(dObj));
     }
-    horizonDays = monthDays.filter((d) => d >= todayStr);
-    if (horizonDays.length === 0) {
-      horizonDays = [todayStr];
-    }
+    // Full month
+    horizonDays = monthDays;
   } else {
     // Default 'today'
     horizonDays = [todayStr];
@@ -505,27 +500,29 @@ export function createDailySchedule(tasks = [], options = {}) {
       }
     }
 
-    // Step B: Fill remaining day capacity with flexible tasks
-    let i = 0;
-    while (i < flexibleQueue.length) {
-      const task = flexibleQueue[i];
-      const res = tryScheduleTaskOnDay(task, false);
-      if (res.success) {
-        newlyScheduledTaskDates.set(task.id, dayStr);
-        flexibleQueue.splice(i, 1);
-      } else {
-        if (res.cannotFitEver) {
-          overflowTasks.push({
-            taskId: task.id,
-            taskTitle: task.title,
-            reason: res.reason || `Cannot fit before deadline`,
-            requestedMinutes: res.requestedMinutes,
-            remainingUnscheduledMinutes: res.remainingUnscheduledMinutes,
-          });
+    // Step B: Fill remaining day capacity with flexible tasks (only for today or future dates)
+    if (dayStr >= todayStr) {
+      let i = 0;
+      while (i < flexibleQueue.length) {
+        const task = flexibleQueue[i];
+        const res = tryScheduleTaskOnDay(task, false);
+        if (res.success) {
+          newlyScheduledTaskDates.set(task.id, dayStr);
           flexibleQueue.splice(i, 1);
         } else {
-          // Leave in queue to attempt placing on next day
-          i++;
+          if (res.cannotFitEver) {
+            overflowTasks.push({
+              taskId: task.id,
+              taskTitle: task.title,
+              reason: res.reason || `Cannot fit before deadline`,
+              requestedMinutes: res.requestedMinutes,
+              remainingUnscheduledMinutes: res.remainingUnscheduledMinutes,
+            });
+            flexibleQueue.splice(i, 1);
+          } else {
+            // Leave in queue to attempt placing on next day
+            i++;
+          }
         }
       }
     }

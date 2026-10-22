@@ -135,7 +135,7 @@ app.post('/api/plan', async (req, res) => {
 
     return res.json({
       ...scheduleResult,
-      enrichedTasks,
+      enrichedTasks: scheduleResult.enrichedTasks || enrichedTasks,
       aiStatus: {
         reachable: health.reachable,
         modelAvailable: health.modelAvailable,

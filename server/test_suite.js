@@ -292,9 +292,75 @@ async function runTests() {
   assert(overflowTestPlan.overflowTasks[0].requestedMinutes === 120, 'Requested minutes specified');
   assert(typeof overflowTestPlan.overflowTasks[0].reason === 'string', 'Overflow reason provided');
 
+  // 18. Regression: Multi-Day Time Assignment, Frontend Matching & Unschedulable Tasks
+  console.log('\n--- 18. Testing Multi-Day Time Assignment, Matching & Unschedulable Reporting ---');
+  const regressionTasks = [
+    // Task 301: Tomorrow (Oct 23)
+    { id: 301, title: 'Tomorrow research session', duration: 45, scheduledDate: '2026-10-23', done: false },
+    // Task 302: Later in week (Saturday Oct 24)
+    { id: 302, title: 'Weekend project review', duration: 60, scheduledDate: '2026-10-24', done: false },
+    // Task 303: Unschedulable due to impossible deadline on Friday (wants 90m, starts 9:00, deadline 9:30)
+    { id: 303, title: 'Urgent impossible deadline', duration: 90, scheduledDate: '2026-10-23', deadline: '2026-10-23T09:30', done: false },
+    // Task 304: Completed task
+    { id: 304, title: 'Already completed paper', duration: 30, scheduledDate: '2026-10-22', done: true },
+    // Task 305: Flexible task with no initial scheduledDate
+    { id: 305, title: 'Flexible chore', duration: 30, done: false },
+  ];
+
+  const regressionPlan = createDailySchedule(regressionTasks, {
+    currentDate: '2026-10-22T09:00:00', // Thursday
+    horizon: 'week',
+    startHour: 9,
+    endHour: 18,
+  });
+
+  // Verify task 301 (Tomorrow) receives actual calendar date and start/end times
+  const entry301 = regressionPlan.schedule.find((s) => String(s.taskId) === '301');
+  assert(Boolean(entry301), 'Task 301 scheduled in active plan');
+  assert(entry301?.date === '2026-10-23', 'Task 301 assigned to correct date (2026-10-23)');
+  assert(typeof entry301?.start === 'string' && /^\d{2}:\d{2}$/.test(entry301.start), `Task 301 has valid start time (${entry301?.start})`);
+  assert(typeof entry301?.end === 'string' && /^\d{2}:\d{2}$/.test(entry301.end), `Task 301 has valid end time (${entry301?.end})`);
+
+  // Verify task 302 (Saturday, 60m) is split into gentle sessions and receives date and times
+  const parts302 = regressionPlan.schedule.filter((s) => String(s.taskId) === '302');
+  assert(parts302.length === 2, `60m task 302 split into 2 parts (actual: ${parts302.length})`);
+  assert(parts302[0].date === '2026-10-24', 'Task 302 Part 1 assigned to Saturday (2026-10-24)');
+  assert(parts302[0].start === '09:00' && parts302[0].end === '09:45', `Task 302 Part 1 runs 09:00–09:45 (${parts302[0].start}–${parts302[0].end})`);
+  assert(parts302[1].start === '09:55' && parts302[1].end === '10:10', `Task 302 Part 2 runs 09:55–10:10 (${parts302[1].start}–${parts302[1].end})`);
+
+  // Verify frontend matching simulation
+  const simulateFrontendWeekViewMatch = (task, dayString) => {
+    return regressionPlan.schedule.filter(
+      (item) =>
+        String(item.taskId) === String(task.id) &&
+        (item.date === dayString || item.scheduledDate === dayString) &&
+        item.type === 'task'
+    );
+  };
+
+  const matchedTomorrow = simulateFrontendWeekViewMatch(regressionTasks[0], '2026-10-23');
+  assert(matchedTomorrow.length > 0, 'Frontend correctly matches Task 301 on 2026-10-23');
+  assert(`${matchedTomorrow[0].start} – ${matchedTomorrow[0].end}` === '09:00 – 09:45', 'Frontend gets exact time range 09:00 – 09:45');
+
+  const matchedWrongDay = simulateFrontendWeekViewMatch(regressionTasks[0], '2026-10-24');
+  assert(matchedWrongDay.length === 0, 'Frontend does not incorrectly match Task 301 on a different day');
+
+  // Verify unschedulable task 303 remains clearly identified in overflowTasks
+  const overflow303 = regressionPlan.overflowTasks.find((ot) => String(ot.taskId) === '303');
+  assert(Boolean(overflow303), 'Unschedulable task 303 is recorded in overflowTasks');
+  assert(overflow303?.reason.includes('deadline'), 'Unschedulable task explanation cites deadline');
+  assert(!regressionPlan.schedule.some((s) => String(s.taskId) === '303'), 'Unschedulable task 303 is not given phantom session in schedule');
+
+  // Verify enrichedTasks carries assigned scheduledDate for flexible task 305
+  const enriched305 = regressionPlan.enrichedTasks.find((t) => String(t.id) === '305');
+  assert(Boolean(enriched305?.scheduledDate), `Flexible task 305 received assigned scheduledDate (${enriched305?.scheduledDate})`);
+
+  // Verify completed task 304 is preserved in completedTasks
+  assert(regressionPlan.completedTasks.some((t) => String(t.id) === '304'), 'Completed task 304 preserved in completedTasks');
+
   console.log(`\n================================`);
   if (failures === 0) {
-    console.log('🎉 ALL 17 TEST SUITES PASSED FLAWLESSLY!');
+    console.log('🎉 ALL 18 TEST SUITES PASSED FLAWLESSLY!');
   } else {
     console.error(`💥 ${failures} TEST(S) FAILED.`);
     process.exit(1);

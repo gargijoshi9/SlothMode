@@ -49,6 +49,22 @@ function toLocalDateString(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+function getDatesInRange(startStr: string, endStr: string): string[] {
+  const dates: string[] = [];
+  if (!startStr || !endStr) return dates;
+  const start = new Date(startStr + "T00:00:00");
+  const end = new Date(endStr + "T00:00:00");
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return dates;
+  const cur = new Date(start);
+  let count = 0;
+  while (cur <= end && count < 60) {
+    dates.push(toLocalDateString(cur));
+    cur.setDate(cur.getDate() + 1);
+    count++;
+  }
+  return dates;
+}
+
 function getMondayOfWeek(d: Date): Date {
   const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const day = date.getDay(); // 0 is Sunday, 1 is Monday, ..., 6 is Saturday
@@ -414,6 +430,10 @@ function App() {
   const [expandedTaskIds, setExpandedTaskIds] = useState<number[]>([1]);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [planFeedback, setPlanFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
   // Planning horizon state: 'today' | 'tomorrow' | 'week' | 'month'
   const [planningHorizon, setPlanningHorizon] = useState<PlanningHorizon>(() => {
@@ -742,10 +762,15 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function generatePlan(isReplan = false) {
+  async function generatePlan(isReplan = false, overrideHorizon?: PlanningHorizon) {
     if (tasks.length === 0) return;
+    const targetHorizon = overrideHorizon || planningHorizon;
+    if (overrideHorizon && overrideHorizon !== planningHorizon) {
+      setPlanningHorizon(overrideHorizon);
+    }
     setIsPlanning(true);
     setErrorMessage(null);
+    setPlanFeedback(null);
 
     try {
       const res = await fetch("/api/plan", {
@@ -754,7 +779,7 @@ function App() {
         body: JSON.stringify({
           tasks,
           options: {
-            horizon: planningHorizon,
+            horizon: targetHorizon,
             startHour: 9,
             endHour: 18,
             useCurrentTimeAsStart: isReplan,
@@ -773,26 +798,63 @@ function App() {
       setPlan(planData);
 
       // Focus timeline on the relevant date
-      if (planningHorizon === "tomorrow") {
+      if (targetHorizon === "tomorrow") {
         setSelectedTimelineDate(getTomorrowDateString());
-      } else if (planningHorizon === "today") {
+      } else if (targetHorizon === "today") {
         setSelectedTimelineDate(getTodayDateString());
       } else if (planData.schedule && planData.schedule.length > 0) {
-        const firstTaskSession = planData.schedule.find((s) => s.type === "task");
-        const targetDate = firstTaskSession?.date || planData.startDate || getTodayDateString();
-        setSelectedTimelineDate(targetDate);
+        // If current selected timeline date already has scheduled focus sessions, retain it;
+        // otherwise, switch to the first date with scheduled focus tasks
+        const hasTasksOnSelected = planData.schedule.some(
+          (s) => s.type === "task" && (s.date || s.scheduledDate) === selectedTimelineDate
+        );
+        if (!hasTasksOnSelected) {
+          const firstTaskSession = planData.schedule.find((s) => s.type === "task");
+          const targetDate = firstTaskSession?.date || planData.startDate || getTodayDateString();
+          setSelectedTimelineDate(targetDate);
+        }
       }
 
-      // Update tasks with AI enriched attributes
+      // Update tasks with AI enriched attributes & newly assigned scheduled dates
       if (Array.isArray(planData.enrichedTasks)) {
         setTasks(planData.enrichedTasks);
       }
+
+      const scheduledFocusCount = (planData.schedule || []).filter((s) => s.type === "task").length;
+      const scheduledDates = Array.from(
+        new Set(
+          (planData.schedule || [])
+            .filter((s) => s.type === "task")
+            .map((s) => s.date || s.scheduledDate)
+            .filter(Boolean)
+        )
+      );
+
+      const horizonLabel =
+        targetHorizon === "today"
+          ? "Today"
+          : targetHorizon === "tomorrow"
+          ? "Tomorrow"
+          : targetHorizon === "week"
+          ? "This Week"
+          : "This Month";
+
+      setPlanFeedback({
+        type: "success",
+        message: `Plan generated for ${horizonLabel}! ${scheduledFocusCount} focus session${
+          scheduledFocusCount === 1 ? "" : "s"
+        } scheduled${scheduledDates.length > 1 ? ` across ${scheduledDates.length} days` : ""}.`,
+      });
     } catch (err: unknown) {
       console.error("Planning failed:", err);
       const msg = err instanceof Error ? err.message : "Failed to generate schedule";
       setErrorMessage(
         `${msg}. Using your offline task list while waiting for the server.`
       );
+      setPlanFeedback({
+        type: "error",
+        message: `Failed to create plan: ${msg}`,
+      });
     } finally {
       setIsPlanning(false);
     }
@@ -974,6 +1036,30 @@ function App() {
           </div>
         )}
 
+        {planFeedback && (
+          <div
+            className={`plan-feedback-banner ${planFeedback.type}`}
+            role="status"
+          >
+            <div className="plan-feedback-content">
+              {planFeedback.type === "success" ? (
+                <CheckCircle2 size={16} />
+              ) : (
+                <AlertTriangle size={16} />
+              )}
+              <span>{planFeedback.message}</span>
+            </div>
+            <button
+              type="button"
+              className="plan-feedback-dismiss"
+              onClick={() => setPlanFeedback(null)}
+              aria-label="Dismiss notice"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         {/* ========================================================= */}
         {/* VIEW 1: MY DAY VIEW (Original Dashboard Experience)       */}
         {/* ========================================================= */}
@@ -1138,23 +1224,30 @@ function App() {
 
             {/* Schedule Timeline Section (Shown once plan is created) */}
             {plan && (() => {
-              const planDates = Array.from(
-                new Set(
-                  plan.schedule.map(
-                    (i) => i.date || i.scheduledDate || getTodayDateString()
-                  )
-                )
+              const scheduleDates = plan.schedule
+                .map((i) => i.date || i.scheduledDate)
+                .filter(Boolean) as string[];
+              const rangeDates =
+                plan.startDate && plan.endDate
+                  ? getDatesInRange(plan.startDate, plan.endDate)
+                  : [];
+              const allDates = Array.from(
+                new Set([
+                  ...scheduleDates,
+                  ...rangeDates,
+                  selectedTimelineDate,
+                  getTodayDateString(),
+                ].filter(Boolean))
               ).sort();
 
               const activeTimelineDate =
-                planDates.includes(selectedTimelineDate)
+                selectedTimelineDate && allDates.includes(selectedTimelineDate)
                   ? selectedTimelineDate
-                  : planDates[0] || getTodayDateString();
+                  : allDates[0] || getTodayDateString();
 
               const displayedScheduleItems = plan.schedule.filter(
                 (item) =>
-                  (item.date || item.scheduledDate || getTodayDateString()) ===
-                  activeTimelineDate
+                  (item.date || item.scheduledDate) === activeTimelineDate
               );
 
               const dayFocusMins = displayedScheduleItems
@@ -1197,22 +1290,35 @@ function App() {
                   </div>
 
                   {/* Multi-date switch chips when plan covers multiple dates */}
-                  {planDates.length > 1 && (
+                  {allDates.length > 1 && (
                     <div className="timeline-date-selector">
                       <span className="timeline-date-label">TIMELINE DATE:</span>
                       <div className="timeline-date-chips">
-                        {planDates.map((dStr) => (
-                          <button
-                            key={dStr}
-                            type="button"
-                            className={`timeline-date-chip ${
-                              dStr === activeTimelineDate ? "active" : ""
-                            }`}
-                            onClick={() => setSelectedTimelineDate(dStr)}
-                          >
-                            {formatDisplayDate(dStr)}
-                          </button>
-                        ))}
+                        {allDates.map((dStr) => {
+                          const countForDate = plan.schedule.filter(
+                            (s) =>
+                              s.type === "task" &&
+                              (s.date || s.scheduledDate) === dStr
+                          ).length;
+                          return (
+                            <button
+                              key={dStr}
+                              type="button"
+                              className={`timeline-date-chip ${
+                                dStr === activeTimelineDate ? "active" : ""
+                              }`}
+                              onClick={() => setSelectedTimelineDate(dStr)}
+                              title={`View timeline for ${formatDisplayDate(dStr)} (${countForDate} focus sessions)`}
+                            >
+                              {formatDisplayDate(dStr)}
+                              {countForDate > 0 && (
+                                <span className="chip-count-badge">
+                                  {countForDate}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -1661,6 +1767,17 @@ function App() {
                 >
                   Next week <ChevronRight size={16} />
                 </button>
+                <button
+                  type="button"
+                  className="plan-button"
+                  onClick={() => generatePlan(false, "week")}
+                  disabled={isPlanning || tasks.length === 0}
+                  title="Make plan for this week"
+                  style={{ padding: "8px 14px", fontSize: "12.5px" }}
+                >
+                  <Sparkles size={14} className={isPlanning ? "loading-spinner" : ""} />
+                  {isPlanning ? "Planning..." : "Make my plan"}
+                </button>
               </div>
             </div>
 
@@ -1758,7 +1875,15 @@ function App() {
                       key={dayString}
                       className={`calendar-col ${isToday ? "is-today" : ""}`}
                     >
-                      <div className="col-header">
+                      <div
+                        className="col-header"
+                        onClick={() => {
+                          setSelectedTimelineDate(dayString);
+                          setActiveTab("day");
+                        }}
+                        style={{ cursor: "pointer" }}
+                        title={`Click to view ${dayName} ${dayNumber} timeline`}
+                      >
                         <div>
                           <span className="col-header-day">{dayName}</span>
                           {isToday && (
@@ -1813,20 +1938,31 @@ function App() {
 
                                 <div className="cal-task-meta">
                                   {(() => {
-                                    const plannedSession = plan?.schedule?.find(
+                                    const plannedSessions = plan?.schedule?.filter(
                                       (item) =>
-                                        item.taskId === task.id &&
+                                        String(item.taskId) === String(task.id) &&
                                         (item.date === dayString ||
                                           item.scheduledDate === dayString) &&
                                         item.type === "task"
-                                    );
-                                    if (plannedSession) {
+                                    ) || [];
+
+                                    if (plannedSessions.length > 0) {
+                                      const timeRangeText =
+                                        plannedSessions.length === 1
+                                          ? `${plannedSessions[0].start} – ${plannedSessions[0].end}`
+                                          : `${plannedSessions[0].start} – ${plannedSessions[plannedSessions.length - 1].end}`;
                                       return (
                                         <span
                                           className="cal-time-chip"
-                                          title="Scheduled session time"
+                                          title={
+                                            plannedSessions.length > 1
+                                              ? `Scheduled across ${plannedSessions.length} parts: ${plannedSessions
+                                                  .map((s) => `${s.start}–${s.end}`)
+                                                  .join(", ")}`
+                                              : `Scheduled session time: ${plannedSessions[0].start} – ${plannedSessions[0].end}`
+                                          }
                                         >
-                                          <Clock3 size={10} /> {plannedSession.start} – {plannedSession.end}
+                                          <Clock3 size={10} /> {timeRangeText}
                                         </span>
                                       );
                                     }
@@ -1997,6 +2133,17 @@ function App() {
                 >
                   Next <ChevronRight size={16} />
                 </button>
+                <button
+                  type="button"
+                  className="plan-button"
+                  onClick={() => generatePlan(false, "month")}
+                  disabled={isPlanning || tasks.length === 0}
+                  title="Make plan for this month"
+                  style={{ padding: "8px 14px", fontSize: "12.5px" }}
+                >
+                  <Sparkles size={14} className={isPlanning ? "loading-spinner" : ""} />
+                  {isPlanning ? "Planning..." : "Make my plan"}
+                </button>
               </div>
             </div>
 
@@ -2120,22 +2267,38 @@ function App() {
                       </div>
 
                       <div className="month-cell-tasks">
-                        {previewTasks.map((t) => (
-                          <div
-                            key={t.id}
-                            className={`month-task-pill ${
-                              t.done ? "task-done" : ""
-                            }`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEditTask(t);
-                            }}
-                            title={`Edit: ${t.title} (${t.duration || 30}m)`}
-                          >
-                            <span className="month-task-dot" />
-                            <span>{t.title}</span>
-                          </div>
-                        ))}
+                        {previewTasks.map((t) => {
+                          const plannedSession = plan?.schedule?.find(
+                            (item) =>
+                              String(item.taskId) === String(t.id) &&
+                              (item.date === cell.dateString ||
+                                item.scheduledDate === cell.dateString) &&
+                              item.type === "task"
+                          );
+                          return (
+                            <div
+                              key={t.id}
+                              className={`month-task-pill ${
+                                t.done ? "task-done" : ""
+                              }`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditTask(t);
+                              }}
+                              title={`Edit: ${t.title} (${
+                                plannedSession
+                                  ? `${plannedSession.start}–${plannedSession.end}`
+                                  : `${t.duration || 30}m`
+                              })`}
+                            >
+                              <span className="month-task-dot" />
+                              <span className="month-task-pill-title">
+                                {plannedSession ? `${plannedSession.start} ` : ""}
+                                {t.title}
+                              </span>
+                            </div>
+                          );
+                        })}
 
                         {overflowCount > 0 && (
                           <span className="month-more-badge">
@@ -2301,14 +2464,30 @@ function App() {
                     })()}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className="modal-close-btn"
-                  onClick={() => setSelectedDayDate(null)}
-                  aria-label="Close day detail"
-                >
-                  <X size={18} />
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginLeft: "auto" }}>
+                  <button
+                    type="button"
+                    className="view-timeline-btn"
+                    onClick={() => {
+                      if (selectedDayDate) {
+                        setSelectedTimelineDate(selectedDayDate);
+                      }
+                      setSelectedDayDate(null);
+                      setActiveTab("day");
+                    }}
+                    title="View this day's schedule in Day timeline"
+                  >
+                    <Clock3 size={13} /> View Timeline
+                  </button>
+                  <button
+                    type="button"
+                    className="modal-close-btn"
+                    onClick={() => setSelectedDayDate(null)}
+                    aria-label="Close day detail"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
 
               {/* Day Tasks List */}
@@ -2377,20 +2556,31 @@ function App() {
 
                         <div className="cal-task-meta">
                           {(() => {
-                            const plannedSession = plan?.schedule?.find(
+                            const plannedSessions = plan?.schedule?.filter(
                               (item) =>
-                                item.taskId === task.id &&
+                                String(item.taskId) === String(task.id) &&
                                 (item.date === selectedDayDate ||
                                   item.scheduledDate === selectedDayDate) &&
                                 item.type === "task"
-                            );
-                            if (plannedSession) {
+                            ) || [];
+
+                            if (plannedSessions.length > 0) {
+                              const timeRangeText =
+                                plannedSessions.length === 1
+                                  ? `${plannedSessions[0].start} – ${plannedSessions[0].end}`
+                                  : `${plannedSessions[0].start} – ${plannedSessions[plannedSessions.length - 1].end}`;
                               return (
                                 <span
                                   className="cal-time-chip"
-                                  title="Scheduled session time"
+                                  title={
+                                    plannedSessions.length > 1
+                                      ? `Scheduled across ${plannedSessions.length} parts: ${plannedSessions
+                                          .map((s) => `${s.start}–${s.end}`)
+                                          .join(", ")}`
+                                      : `Scheduled session time: ${plannedSessions[0].start} – ${plannedSessions[0].end}`
+                                  }
                                 >
-                                  <Clock3 size={10} /> {plannedSession.start} – {plannedSession.end}
+                                  <Clock3 size={10} /> {timeRangeText}
                                 </span>
                               );
                             }
