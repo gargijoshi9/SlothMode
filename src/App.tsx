@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Sparkles,
   Plus,
@@ -22,10 +22,15 @@ import {
   AlertTriangle,
   CheckCircle2,
   SlidersHorizontal,
+  Tag,
+  Play,
+  Pause,
+  RotateCcw,
 } from "lucide-react";
 import "./App.css";
 import type {
   Task,
+  Subtask,
   PlanResponse,
   ScheduleItem,
   HealthStatus,
@@ -36,6 +41,7 @@ import type {
   SchedulerSettings,
   RoutineSettings,
   RoutineBlock,
+  ActiveFocusState,
 } from "./types";
 import { DEFAULT_ROUTINE_BLOCKS, DEFAULT_ROUTINE_SETTINGS } from "./types";
 import {
@@ -400,6 +406,39 @@ function App() {
   const [draftScheduledDate, setDraftScheduledDate] = useState(getTodayDateString);
   const [draftDeadline, setDraftDeadline] = useState("");
   const [showDeadlineInput, setShowDeadlineInput] = useState(false);
+  const [draftCategory, setDraftCategory] = useState<TaskCategory>("personal");
+  const [showCategoryInput, setShowCategoryInput] = useState(false);
+  const [draftDuration, setDraftDuration] = useState<number | "">("");
+  const [showDurationInput, setShowDurationInput] = useState(false);
+
+  // Active focus session state
+  const [activeFocus, setActiveFocus] = useState<ActiveFocusState | null>(() => {
+    try {
+      const saved = localStorage.getItem("slothmode_active_focus");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (
+          parsed &&
+          typeof parsed.taskId === "number" &&
+          typeof parsed.remainingSeconds === "number" &&
+          typeof parsed.totalSeconds === "number"
+        ) {
+          return {
+            ...parsed,
+            isRunning: false, // gentle safety: start paused on page reload
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
+
+  const [showStuckMenu, setShowStuckMenu] = useState(false);
+  const [showFinishPrompt, setShowFinishPrompt] = useState(false);
+  const [stuckSubtaskInput, setStuckSubtaskInput] = useState("");
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Week navigation state
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
@@ -823,16 +862,22 @@ function App() {
 
     const cleanTitle = draft.trim();
     const explicit = parseExplicitDuration(cleanTitle);
+    const hasManualDuration = showDurationInput && typeof draftDuration === "number" && draftDuration > 0;
+    const finalDuration = hasManualDuration ? (draftDuration as number) : (explicit ? explicit.durationMinutes : 30);
+    const finalSource: DurationSource = hasManualDuration ? "manual" : (explicit ? "explicit" : "provisional");
+    const finalCategory: TaskCategory = showCategoryInput ? draftCategory : "personal";
 
     const newTask: Task = {
       id: Date.now(),
       title: cleanTitle,
-      category: "personal",
-      duration: explicit ? explicit.durationMinutes : 30, // Explicit duration or 30m provisional
-      durationSource: explicit ? "explicit" : "provisional",
-      isEstimatingDuration: !explicit,
-      durationConfidence: explicit ? "high" : undefined,
-      estimationReasoning: explicit ? explicit.reasoning : undefined,
+      category: finalCategory,
+      duration: finalDuration,
+      durationSource: finalSource,
+      isEstimatingDuration: !explicit && !hasManualDuration,
+      durationConfidence: hasManualDuration ? undefined : (explicit ? "high" : undefined),
+      estimationReasoning: hasManualDuration
+        ? "Specified by user during creation"
+        : (explicit ? explicit.reasoning : undefined),
       priority: "Medium",
       urgency: "medium",
       done: false,
@@ -852,7 +897,9 @@ function App() {
       ],
       schedulingTip: explicit
         ? `Paced for your explicit ${explicit.durationMinutes}m focus session.`
-        : "Take it slow and steady. Work in focused intervals.",
+        : (hasManualDuration
+          ? `Paced for your set ${finalDuration}m focus session.`
+          : "Take it slow and steady. Work in focused intervals."),
       aiGenerated: false,
     };
 
@@ -860,9 +907,13 @@ function App() {
     setDraft("");
     setDraftDeadline("");
     setShowDeadlineInput(false);
+    setDraftCategory("personal");
+    setShowCategoryInput(false);
+    setDraftDuration("");
+    setShowDurationInput(false);
 
-    // Only run dynamic Ollama estimation if no explicit duration was found in title!
-    if (!explicit) {
+    // Only run dynamic Ollama estimation if no explicit duration was found in title AND no manual duration was provided!
+    if (!explicit && !hasManualDuration) {
       triggerAsyncEstimation(newTask, false);
     }
   }
@@ -930,6 +981,248 @@ function App() {
       };
     });
   }
+
+  // Focus Mode Helpers & Resource Management
+  function formatFocusTimer(totalSecs: number): string {
+    const s = Math.max(0, Math.floor(totalSecs));
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+
+  function startFocusForTask(task: Task, durationMinutes?: number) {
+    const mins = Math.max(5, Math.min(480, durationMinutes || task.duration || 25));
+    const firstIncompleteSubtask = (task.subtasks || []).find((s) => !s.done);
+    setActiveFocus({
+      taskId: task.id,
+      taskTitle: task.title,
+      category: task.category,
+      totalSeconds: mins * 60,
+      remainingSeconds: mins * 60,
+      isRunning: true,
+      isBreakMode: false,
+      breakSecondsRemaining: 300,
+      activeSubtaskId: firstIncompleteSubtask ? firstIncompleteSubtask.id : null,
+    });
+    setShowStuckMenu(false);
+    setShowFinishPrompt(false);
+  }
+
+  function startFocusForScheduleItem(item: ScheduleItem) {
+    const matchedTask = tasks.find((t) => t.id === item.taskId);
+    if (matchedTask) {
+      startFocusForTask(matchedTask, item.durationMinutes);
+    } else {
+      startFocusForTask(
+        {
+          id: item.taskId || 0,
+          title: item.title,
+          category: (item.category as TaskCategory) || "personal",
+          duration: item.durationMinutes,
+          priority: "Medium",
+          done: false,
+          subtasks: item.subtasks || [],
+        },
+        item.durationMinutes
+      );
+    }
+  }
+
+  function togglePauseResumeFocus() {
+    setActiveFocus((prev) => (prev ? { ...prev, isRunning: !prev.isRunning } : null));
+  }
+
+  function exitFocusMode() {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setActiveFocus(null);
+    setShowStuckMenu(false);
+    setShowFinishPrompt(false);
+  }
+
+  function completeFocusAndTask(markDone: boolean) {
+    if (activeFocus && markDone) {
+      const currentTask = tasks.find((t) => t.id === activeFocus.taskId);
+      if (currentTask && !currentTask.done) {
+        toggleTask(activeFocus.taskId);
+      }
+    }
+    exitFocusMode();
+  }
+
+  function addFiveMoreMinutes() {
+    setActiveFocus((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        totalSeconds: prev.totalSeconds + 300,
+        remainingSeconds: prev.remainingSeconds + 300,
+        isRunning: true,
+      };
+    });
+    setShowFinishPrompt(false);
+  }
+
+  function startBreatherBreak() {
+    setActiveFocus((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        isBreakMode: true,
+        breakSecondsRemaining: 300,
+        isRunning: true,
+      };
+    });
+    setShowStuckMenu(false);
+  }
+
+  function resumeFocusFromBreather() {
+    setActiveFocus((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        isBreakMode: false,
+        breakSecondsRemaining: 0,
+        isRunning: true,
+      };
+    });
+  }
+
+  function handleAddSubtaskInFocus() {
+    if (!stuckSubtaskInput.trim() || !activeFocus) return;
+    const title = stuckSubtaskInput.trim();
+    const newSubId = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const newSub: Subtask = {
+      id: newSubId,
+      title,
+      done: false,
+    };
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id === activeFocus.taskId) {
+          return {
+            ...t,
+            subtasks: [...(t.subtasks || []), newSub],
+          };
+        }
+        return t;
+      })
+    );
+    setActiveFocus((prev) => (prev ? { ...prev, activeSubtaskId: newSubId } : null));
+    setStuckSubtaskInput("");
+  }
+
+  function handleToggleSubtaskInFocus(subId: string) {
+    if (!activeFocus) return;
+    toggleSubtask(activeFocus.taskId, subId);
+
+    const currentTask = tasks.find((t) => t.id === activeFocus.taskId);
+    if (currentTask && currentTask.subtasks) {
+      const nextUnfinished = currentTask.subtasks.find((s) => s.id !== subId && !s.done);
+      if (nextUnfinished) {
+        setActiveFocus((prev) => (prev ? { ...prev, activeSubtaskId: nextUnfinished.id } : null));
+      }
+    }
+  }
+
+  // Persist focus state safely
+  useEffect(() => {
+    try {
+      if (activeFocus) {
+        localStorage.setItem("slothmode_active_focus", JSON.stringify(activeFocus));
+      } else {
+        localStorage.removeItem("slothmode_active_focus");
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeFocus]);
+
+  const isFocusRunning = Boolean(activeFocus?.isRunning);
+  const isFocusBreakMode = Boolean(activeFocus?.isBreakMode);
+
+  // Clean interval timer effect: guarantees zero duplicate timers
+  useEffect(() => {
+    if (!isFocusRunning) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    timerRef.current = setInterval(() => {
+      setActiveFocus((prev) => {
+        if (!prev || !prev.isRunning) return prev;
+
+        if (prev.isBreakMode) {
+          const nextBreak = (prev.breakSecondsRemaining ?? 300) - 1;
+          if (nextBreak <= 0) {
+            return {
+              ...prev,
+              isBreakMode: false,
+              breakSecondsRemaining: 0,
+              isRunning: false,
+            };
+          }
+          return {
+            ...prev,
+            breakSecondsRemaining: nextBreak,
+          };
+        }
+
+        const nextRemaining = prev.remainingSeconds - 1;
+        if (nextRemaining <= 0) {
+          return {
+            ...prev,
+            remainingSeconds: 0,
+            isRunning: false,
+          };
+        }
+        return {
+          ...prev,
+          remainingSeconds: nextRemaining,
+        };
+      });
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [isFocusRunning, isFocusBreakMode]);
+
+  // Keyboard accessibility: Escape to leave, Space/k to pause/resume
+  useEffect(() => {
+    if (!activeFocus) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") {
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        exitFocusMode();
+      } else if (e.key === " " || e.key === "k") {
+        e.preventDefault();
+        togglePauseResumeFocus();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeFocus]);
 
   // Week navigation functions
   function prevWeek() {
@@ -1714,14 +2007,22 @@ function App() {
               </div>
             </section>
 
-            <section className="brain-dump panel">
+            <section className={`brain-dump panel ${tasks.length === 0 ? "is-empty-hero" : ""}`}>
               <div className="section-heading">
                 <div className="heading-icon">
                   <Brain size={20} />
                 </div>
                 <div>
-                  <h2>Get it off your mind</h2>
-                  <p>Big task, tiny task, random reminder — put it all here.</p>
+                  <h2>
+                    {tasks.length === 0
+                      ? "Let's start with one small thing."
+                      : "Get it off your mind"}
+                  </h2>
+                  <p>
+                    {tasks.length === 0
+                      ? "Type any task, assignment, or reading. No need to structure it or worry about timing yet."
+                      : "Big task, tiny task, random reminder — put it all here."}
+                  </p>
                 </div>
               </div>
               <form className="task-form" onSubmit={addTask}>
@@ -1729,7 +2030,7 @@ function App() {
                   <input
                     value={draft}
                     onChange={(event) => setDraft(event.target.value)}
-                    placeholder="e.g. Study OS, finish assignment, call a friend..."
+                    placeholder="e.g. Study OS practical for 2 hours"
                     aria-label="Describe a task"
                   />
                   <button type="submit" className="add-button">
@@ -1742,7 +2043,7 @@ function App() {
                   <div className="task-option-item">
                     <label className="option-label" htmlFor="task-schedule-date">
                       <Calendar size={14} className="option-icon" />
-                      <span>Schedule date:</span>
+                      <span>Date:</span>
                     </label>
                     <input
                       id="task-schedule-date"
@@ -1763,7 +2064,7 @@ function App() {
                         onClick={() => setShowDeadlineInput(true)}
                         title="Add an optional completion deadline"
                       >
-                        <Clock3 size={14} />
+                        <Clock3 size={13} />
                         <span>+ Add deadline</span>
                       </button>
                     ) : (
@@ -1772,7 +2073,7 @@ function App() {
                           className="option-label"
                           htmlFor="task-deadline-datetime"
                         >
-                          <Clock3 size={14} className="option-icon" />
+                          <Clock3 size={13} className="option-icon" />
                           <span>Deadline:</span>
                         </label>
                         <input
@@ -1798,135 +2099,237 @@ function App() {
                       </div>
                     )}
                   </div>
+
+                  {/* Category field (optional) */}
+                  <div className="task-option-item">
+                    {!showCategoryInput ? (
+                      <button
+                        type="button"
+                        className="toggle-deadline-btn"
+                        onClick={() => setShowCategoryInput(true)}
+                        title="Add an optional category"
+                      >
+                        <Tag size={13} />
+                        <span>+ Add category</span>
+                      </button>
+                    ) : (
+                      <div className="deadline-input-group">
+                        <label className="option-label" htmlFor="task-category-select">
+                          <Tag size={13} className="option-icon" />
+                          <span>Category:</span>
+                        </label>
+                        <select
+                          id="task-category-select"
+                          className="category-picker-select"
+                          value={draftCategory}
+                          onChange={(e) => setDraftCategory(e.target.value as TaskCategory)}
+                          aria-label="Task category"
+                        >
+                          <option value="college">College</option>
+                          <option value="exam_prep">Exam Prep</option>
+                          <option value="chore">Chore</option>
+                          <option value="health">Health</option>
+                          <option value="personal">Personal</option>
+                          <option value="work">Work</option>
+                        </select>
+                        <button
+                          type="button"
+                          className="clear-deadline-btn"
+                          onClick={() => {
+                            setDraftCategory("personal");
+                            setShowCategoryInput(false);
+                          }}
+                          title="Remove category"
+                          aria-label="Remove category"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Duration field (optional) */}
+                  <div className="task-option-item">
+                    {!showDurationInput ? (
+                      <button
+                        type="button"
+                        className="toggle-deadline-btn"
+                        onClick={() => setShowDurationInput(true)}
+                        title="Add an optional target duration"
+                      >
+                        <Clock3 size={13} />
+                        <span>+ Add duration</span>
+                      </button>
+                    ) : (
+                      <div className="deadline-input-group">
+                        <label className="option-label" htmlFor="task-duration-input">
+                          <Clock3 size={13} className="option-icon" />
+                          <span>Duration:</span>
+                        </label>
+                        <input
+                          id="task-duration-input"
+                          type="number"
+                          min={5}
+                          max={480}
+                          step={5}
+                          className="duration-picker-input"
+                          placeholder="30"
+                          value={draftDuration === "" ? "" : draftDuration}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDraftDuration(val === "" ? "" : Math.max(5, Math.min(480, Number(val))));
+                          }}
+                          aria-label="Task duration in minutes"
+                        />
+                        <span className="duration-unit-label">min</span>
+                        <button
+                          type="button"
+                          className="clear-deadline-btn"
+                          onClick={() => {
+                            setDraftDuration("");
+                            setShowDurationInput(false);
+                          }}
+                          title="Remove custom duration"
+                          aria-label="Remove custom duration"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </form>
 
               <div className="brain-dump-plan-bar">
                 <div className="brain-dump-hint-wrap">
                   <Sparkles size={14} className="hint-icon" />
-                  <span>Local AI breaks down your tasks and schedules calm breaks.</span>
+                  <span>
+                    {tasks.length === 0
+                      ? "Add your first task above — SlothMode will gently pace your day and schedule breaks."
+                      : "Local AI breaks down your tasks and schedules calm breaks."}
+                  </span>
                 </div>
 
-                <div className="brain-dump-actions">
-                  {!plan && (
-                    <>
-                      <div
-                        className="horizon-pills-container"
-                        role="radiogroup"
-                        aria-label="Planning Horizon"
-                      >
-                        {(
-                          [
-                            { key: "today", label: "Today" },
-                            { key: "tomorrow", label: "Tomorrow" },
-                            { key: "week", label: "This Week" },
-                            { key: "month", label: "This Month" },
-                          ] as const
-                        ).map((h) => (
-                          <button
-                            key={h.key}
-                            type="button"
-                            className={`horizon-pill ${
-                              planningHorizon === h.key ? "active" : ""
-                            }`}
-                            onClick={() => setPlanningHorizon(h.key)}
-                            aria-checked={planningHorizon === h.key}
-                            role="radio"
-                          >
-                            {h.label}
-                          </button>
-                        ))}
-                      </div>
+                {tasks.length > 0 && (
+                  <div className="brain-dump-actions">
+                    {!plan && (
+                      <>
+                        <div
+                          className="horizon-pills-container"
+                          role="radiogroup"
+                          aria-label="Planning Horizon"
+                        >
+                          {(
+                            [
+                              { key: "today", label: "Today" },
+                              { key: "tomorrow", label: "Tomorrow" },
+                              { key: "week", label: "This Week" },
+                              { key: "month", label: "This Month" },
+                            ] as const
+                          ).map((h) => (
+                            <button
+                              key={h.key}
+                              type="button"
+                              className={`horizon-pill ${
+                                planningHorizon === h.key ? "active" : ""
+                              }`}
+                              onClick={() => setPlanningHorizon(h.key)}
+                              aria-checked={planningHorizon === h.key}
+                              role="radio"
+                            >
+                              {h.label}
+                            </button>
+                          ))}
+                        </div>
 
-                      <button
-                        type="button"
-                        className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
-                        onClick={() => setShowRoutineSettings((prev) => !prev)}
-                        title="Configure focus sessions and break routine"
-                        aria-expanded={showRoutineSettings}
-                      >
-                        <SlidersHorizontal size={13} />
-                        <span>Breaks:</span>
-                        <strong style={{ textTransform: "capitalize" }}>
-                          {schedulerSettings.breakBehavior === "after_task" ? "After Task" : schedulerSettings.breakBehavior}
-                        </strong>
-                      </button>
-                    </>
-                  )}
+                        <button
+                          type="button"
+                          className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
+                          onClick={() => setShowRoutineSettings((prev) => !prev)}
+                          title="Configure focus sessions and break routine"
+                          aria-expanded={showRoutineSettings}
+                        >
+                          <SlidersHorizontal size={13} />
+                          <span>Breaks:</span>
+                          <strong style={{ textTransform: "capitalize" }}>
+                            {schedulerSettings.breakBehavior === "after_task" ? "After Task" : schedulerSettings.breakBehavior}
+                          </strong>
+                        </button>
+                      </>
+                    )}
 
-                  <button
-                    type="button"
-                    className="plan-button primary-make-plan-btn"
-                    onClick={() => {
-                      scrollToTimeline(50);
-                      generatePlan(false);
-                    }}
-                    disabled={isPlanning || tasks.length === 0}
-                    title={
-                      tasks.length === 0
-                        ? "Add tasks above first, then generate your calm plan"
-                        : `Generate your calm ${planningHorizon} schedule`
-                    }
-                  >
-                    <Sparkles
-                      size={16}
-                      className={isPlanning ? "loading-spinner" : ""}
-                    />
-                    {isPlanning ? "Planning..." : "Make my plan"}
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      className="plan-button primary-make-plan-btn"
+                      onClick={() => {
+                        scrollToTimeline(50);
+                        generatePlan(false);
+                      }}
+                      disabled={isPlanning}
+                      title={`Generate your calm ${planningHorizon} schedule`}
+                    >
+                      <Sparkles
+                        size={16}
+                        className={isPlanning ? "loading-spinner" : ""}
+                      />
+                      {isPlanning ? "Planning..." : `Make my plan (${tasks.length})`}
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
 
             {!plan && showRoutineSettings && renderRoutineSettingsCard()}
 
-            <section className="stats-grid">
-              <div className="stat-card">
-                <span className="stat-icon green">
-                  <Check size={19} />
-                </span>
-                <span className="stat-label">DONE SO FAR</span>
-                <strong>
-                  {completed}
-                  <small> / {tasks.length}</small>
-                </strong>
-                <div className="progress-track">
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${
-                        tasks.length ? (completed / tasks.length) * 100 : 0
-                      }%`,
-                    }}
-                  />
+            {tasks.length > 0 && (
+              <section className="stats-grid">
+                <div className="stat-card">
+                  <span className="stat-icon green">
+                    <Check size={19} />
+                  </span>
+                  <span className="stat-label">DONE SO FAR</span>
+                  <strong>
+                    {completed}
+                    <small> / {tasks.length}</small>
+                  </strong>
+                  <div className="progress-track">
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width: `${
+                          tasks.length ? (completed / tasks.length) * 100 : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
-              <div className="stat-card">
-                <span className="stat-icon peach">
-                  <Clock3 size={19} />
-                </span>
-                <span className="stat-label">TIME LEFT TO PLAN</span>
-                <strong>
-                  {Math.floor(totalMinutes / 60)}
-                  <small>h </small>
-                  {totalMinutes % 60}
-                  <small>m</small>
-                </strong>
-                <p className="stat-footnote">
-                  {plan?.metrics.totalFocusMinutes
-                    ? `${plan.metrics.totalFocusMinutes}m planned focus · ${plan.metrics.totalBreakMinutes}m breaks`
-                    : "Estimated from your tasks"}
-                </p>
-              </div>
-              <div className="stat-card">
-                <span className="stat-icon lavender">
-                  <Coffee size={19} />
-                </span>
-                <span className="stat-label">YOUR REMINDER</span>
-                <strong className="gentle-text">Take a breath.</strong>
-                <p className="stat-footnote">Rest is productive, too.</p>
-              </div>
-            </section>
+                <div className="stat-card">
+                  <span className="stat-icon peach">
+                    <Clock3 size={19} />
+                  </span>
+                  <span className="stat-label">TIME LEFT TO PLAN</span>
+                  <strong>
+                    {Math.floor(totalMinutes / 60)}
+                    <small>h </small>
+                    {totalMinutes % 60}
+                    <small>m</small>
+                  </strong>
+                  <p className="stat-footnote">
+                    {plan?.metrics.totalFocusMinutes
+                      ? `${plan.metrics.totalFocusMinutes}m planned focus · ${plan.metrics.totalBreakMinutes}m breaks`
+                      : "Estimated from your tasks"}
+                  </p>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-icon lavender">
+                    <Coffee size={19} />
+                  </span>
+                  <span className="stat-label">YOUR REMINDER</span>
+                  <strong className="gentle-text">Take a breath.</strong>
+                  <p className="stat-footnote">Rest is productive, too.</p>
+                </div>
+              </section>
+            )}
 
             {/* Schedule Timeline Section (Shown once plan is created) */}
             {plan && (() => {
@@ -2245,6 +2648,19 @@ function App() {
                                 : item.schedulingTip ||
                                   "Focus with zero multitasking during this block."}
                             </p>
+
+                            {item.type === "task" && (
+                              <button
+                                type="button"
+                                className="timeline-focus-btn"
+                                onClick={() => startFocusForScheduleItem(item)}
+                                title={`Start focus session for "${item.title}"`}
+                                aria-label={`Start focus session for ${item.title}`}
+                              >
+                                <Play size={11} fill="currentColor" />
+                                <span>Start focus</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))
@@ -2285,15 +2701,17 @@ function App() {
                       : planningHorizon === "week"
                       ? "This week's intentions"
                       : "This month's intentions"}{" "}
-                    <span>({tasks.length})</span>
+                    {tasks.length > 0 && <span>({tasks.length})</span>}
                   </h2>
                 </div>
-                <div className="tasks-status-badge-wrap">
-                  <span className="tasks-status-pill">
-                    <strong>{tasks.filter((t) => t.done).length}</strong> completed ·{" "}
-                    <strong>{tasks.filter((t) => !t.done).length}</strong> remaining
-                  </span>
-                </div>
+                {tasks.length > 0 && (
+                  <div className="tasks-status-badge-wrap">
+                    <span className="tasks-status-pill">
+                      <strong>{tasks.filter((t) => t.done).length}</strong> completed ·{" "}
+                      <strong>{tasks.filter((t) => !t.done).length}</strong> remaining
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Overdue Tasks Notice */}
@@ -2336,10 +2754,13 @@ function App() {
 
               <div className="task-list">
                 {tasks.length === 0 ? (
-                  <div className="empty-state">
-                    <span>🌿</span>
-                    <h3>A little breathing room.</h3>
-                    <p>No tasks here. Add something whenever you're ready.</p>
+                  <div className="empty-state gentle-empty-state">
+                    <span className="empty-state-icon">🌱</span>
+                    <h3>Let's start with one small thing.</h3>
+                    <p>
+                      No need to plan your whole week right now. Type a single task above — like{" "}
+                      <em>"Study OS practical for 2 hours"</em> — and we'll take care of the rest.
+                    </p>
                   </div>
                 ) : (
                   tasks.map((task) => {
@@ -2478,6 +2899,22 @@ function App() {
                           >
                             {task.urgency || task.priority}
                           </span>
+
+                          {!task.done && (
+                            <button
+                              type="button"
+                              className="task-focus-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startFocusForTask(task);
+                              }}
+                              title={`Start focus session for "${task.title}"`}
+                              aria-label={`Start focus session for ${task.title}`}
+                            >
+                              <Play size={10} fill="currentColor" />
+                              <span>Focus</span>
+                            </button>
+                          )}
 
                           <button
                             className="delete-button"
@@ -3842,6 +4279,307 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Distraction-Reduced Focus Mode View */}
+        {activeFocus && (() => {
+          const currentTask = tasks.find((t) => t.id === activeFocus.taskId);
+          const activeSubtask =
+            currentTask?.subtasks?.find((s) => s.id === activeFocus.activeSubtaskId) ||
+            currentTask?.subtasks?.find((s) => !s.done);
+          const allSubtasksDone =
+            currentTask?.subtasks &&
+            currentTask.subtasks.length > 0 &&
+            currentTask.subtasks.every((s) => s.done);
+
+          const currentDisplaySeconds = activeFocus.isBreakMode
+            ? (activeFocus.breakSecondsRemaining ?? 300)
+            : activeFocus.remainingSeconds;
+
+          const totalDisplaySeconds = activeFocus.isBreakMode
+            ? 300
+            : activeFocus.totalSeconds;
+
+          const progressPercent = Math.min(
+            100,
+            Math.max(
+              0,
+              ((totalDisplaySeconds - currentDisplaySeconds) / totalDisplaySeconds) * 100
+            )
+          );
+
+          const isTimerFinished = activeFocus.remainingSeconds === 0 && !activeFocus.isBreakMode;
+
+          return (
+            <div className="focus-mode-backdrop" role="dialog" aria-modal="true" aria-label="Focus mode">
+              <div className="focus-mode-card">
+                {/* Header bar */}
+                <div className="focus-header-bar">
+                  <div className="focus-badge-sloth">
+                    <span>🦥</span>
+                    <span>SlothMode Focus</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="focus-leave-btn"
+                    onClick={exitFocusMode}
+                    title="Leave and continue later without pressure"
+                    aria-label="Leave focus mode"
+                  >
+                    <X size={14} />
+                    <span>Continue later</span>
+                  </button>
+                </div>
+
+                {/* Category & Task Title */}
+                {activeFocus.category && (
+                  <span className="focus-category-badge">
+                    {activeFocus.category.replace("_", " ")}
+                  </span>
+                )}
+                <h2 className="focus-task-title">{activeFocus.taskTitle}</h2>
+
+                {/* Current Actionable Subtask */}
+                {activeSubtask ? (
+                  <div className="focus-active-step-card">
+                    <span className="focus-step-label">Current actionable step</span>
+                    <div className="focus-step-row">
+                      <button
+                        type="button"
+                        className={`focus-step-checkbox ${activeSubtask.done ? "checked" : ""}`}
+                        onClick={() => handleToggleSubtaskInFocus(activeSubtask.id)}
+                        aria-label={`Mark step "${activeSubtask.title}" done`}
+                        title="Mark step complete"
+                      >
+                        {activeSubtask.done && <Check size={14} />}
+                      </button>
+                      <span className={`focus-step-title ${activeSubtask.done ? "completed" : ""}`}>
+                        {activeSubtask.title}
+                      </span>
+                    </div>
+                  </div>
+                ) : allSubtasksDone ? (
+                  <div className="focus-all-steps-done">
+                    <CheckCircle2 size={16} /> All planned sub-steps complete! Focus on your overall goal.
+                  </div>
+                ) : (
+                  <div className="focus-gentle-reminder">
+                    <span>🍃</span> Single-task focus. Take it one breath at a time.
+                  </div>
+                )}
+
+                {/* Timer & Progress */}
+                <div className="focus-timer-container">
+                  <div className="focus-time-display">
+                    <span className="focus-time-digits" aria-live="polite">
+                      {formatFocusTimer(currentDisplaySeconds)}
+                    </span>
+                    <span className="focus-time-label">
+                      {activeFocus.isBreakMode
+                        ? "Calming 5-min Breather"
+                        : activeFocus.isRunning
+                        ? "Pacing your session"
+                        : "Session paused"}
+                    </span>
+                  </div>
+
+                  <div
+                    className="focus-progress-track"
+                    role="progressbar"
+                    aria-valuenow={Math.round(progressPercent)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
+                    <div
+                      className={`focus-progress-fill ${activeFocus.isBreakMode ? "is-breather" : ""}`}
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+
+                  <div className="focus-time-footer">
+                    <span>{Math.round(progressPercent)}% elapsed</span>
+                    <span>
+                      {activeFocus.isBreakMode ? "Breather: 5m" : `Target: ${Math.ceil(activeFocus.totalSeconds / 60)}m`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="focus-actions-row">
+                  {activeFocus.isBreakMode ? (
+                    <button
+                      type="button"
+                      className="focus-primary-btn"
+                      onClick={resumeFocusFromBreather}
+                    >
+                      <Play size={16} fill="currentColor" />
+                      <span>Resume focus session</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="focus-primary-btn"
+                        onClick={togglePauseResumeFocus}
+                        aria-label={activeFocus.isRunning ? "Pause focus timer" : "Resume focus timer"}
+                      >
+                        {activeFocus.isRunning ? (
+                          <>
+                            <Pause size={16} />
+                            <span>Pause</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play size={16} fill="currentColor" />
+                            <span>Resume</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="focus-stuck-btn"
+                        onClick={() => setShowStuckMenu((prev) => !prev)}
+                        aria-expanded={showStuckMenu}
+                        title="Get supportive suggestions if you feel stuck"
+                      >
+                        <span>🌱</span>
+                        <span>I'm stuck</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="focus-secondary-btn"
+                        onClick={() => setShowFinishPrompt(true)}
+                        title="Finish session early without guilt"
+                      >
+                        <Check size={15} />
+                        <span>Finish early</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* "I'm Stuck" Menu */}
+                {showStuckMenu && !activeFocus.isBreakMode && (
+                  <div className="focus-stuck-panel">
+                    <p className="focus-stuck-title">
+                      <span>🌱</span>
+                      <span>It's completely okay to feel stuck. What would feel gentle right now?</span>
+                    </p>
+
+                    <div className="focus-stuck-options">
+                      {/* Option 1: Break into smaller steps */}
+                      <div className="focus-stuck-option-card">
+                        <span className="focus-stuck-option-header">1. Break this task into smaller steps</span>
+                        <p className="focus-stuck-option-desc">
+                          Add the tiniest possible sub-step you can do right now (e.g. "Open document and read title").
+                        </p>
+                        <div className="focus-quick-subtask-row">
+                          <input
+                            type="text"
+                            placeholder="e.g. Read first 2 paragraphs..."
+                            value={stuckSubtaskInput}
+                            onChange={(e) => setStuckSubtaskInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleAddSubtaskInFocus();
+                              }
+                            }}
+                          />
+                          <button type="button" onClick={handleAddSubtaskInFocus}>
+                            + Add step
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Option 2: Choose a smaller next step */}
+                      {currentTask?.subtasks && currentTask.subtasks.length > 0 && (
+                        <div className="focus-stuck-option-card">
+                          <span className="focus-stuck-option-header">2. Choose a smaller next step</span>
+                          <p className="focus-stuck-option-desc">
+                            Click any step below to make it your current focus:
+                          </p>
+                          <div className="focus-step-chips-wrap">
+                            {currentTask.subtasks.map((s) => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                className={`focus-step-chip ${s.id === activeFocus.activeSubtaskId ? "active" : ""}`}
+                                onClick={() => setActiveFocus((prev) => (prev ? { ...prev, activeSubtaskId: s.id } : null))}
+                              >
+                                {s.done ? "✓ " : ""}{s.title}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Option 3: Take a short break */}
+                      <div className="focus-stuck-option-card">
+                        <span className="focus-stuck-option-header">3. Take a 5-minute breather</span>
+                        <p className="focus-stuck-option-desc">
+                          Step away from the screen, stretch, drink water, and take 3 deep breaths. Your focus timer will wait for you.
+                        </p>
+                        <button
+                          type="button"
+                          className="focus-breather-btn"
+                          onClick={startBreatherBreak}
+                        >
+                          <Coffee size={13} />
+                          <span>Start 5-min breather</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Finish & Timer-Zero Dialog */}
+                {(showFinishPrompt || isTimerFinished) && (
+                  <div className="focus-dialog-backdrop">
+                    <span style={{ fontSize: "36px" }}>🌿</span>
+                    <h3 className="focus-dialog-title">
+                      {isTimerFinished ? "Session complete!" : "Finish session early?"}
+                    </h3>
+                    <p className="focus-dialog-subtitle">
+                      You spent focused, deliberate time on this. Every minute counts. How would you like to wrap up?
+                    </p>
+
+                    <div className="focus-dialog-actions">
+                      <button
+                        type="button"
+                        className="focus-dialog-btn-done"
+                        onClick={() => completeFocusAndTask(true)}
+                      >
+                        <Check size={16} />
+                        <span>Mark task as completed</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="focus-dialog-btn-later"
+                        onClick={() => completeFocusAndTask(false)}
+                      >
+                        <span>Keep task open for later</span>
+                      </button>
+
+                      {isTimerFinished && (
+                        <button
+                          type="button"
+                          className="focus-dialog-btn-more"
+                          onClick={addFiveMoreMinutes}
+                        >
+                          <RotateCcw size={13} />
+                          <span>In the flow? Add 5 more minutes</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         <footer className="footer">
           <Moon size={15} /> You are a human being, not a productivity machine.

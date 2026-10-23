@@ -34,6 +34,19 @@ export type Task = {
 
 export type PlanningHorizon = 'today' | 'tomorrow' | 'week' | 'month';
 
+export interface ActiveFocusState {
+  taskId: number;
+  taskTitle: string;
+  category?: string;
+  totalSeconds: number;
+  remainingSeconds: number;
+  isRunning: boolean;
+  isBreakMode?: boolean;
+  breakSecondsRemaining?: number;
+  activeSubtaskId?: string | null;
+  startedAt?: number;
+}
+
 export type ScheduleItem = {
   id: string;
   type: 'task' | 'break' | 'blocked' | 'routine';
