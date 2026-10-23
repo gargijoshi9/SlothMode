@@ -175,6 +175,177 @@ export function sortTasksForScheduling(tasks, referenceDate = new Date()) {
 }
 
 /**
+ * Splits a task's total duration into focus sessions between minSessionMinutes (45m)
+ * and maxSessionMinutes (120m), preserving total effort with 0 lost or duplicated minutes.
+ * Short tasks (< minSessionMinutes) remain intact as a single session without padding.
+ */
+export function calculateSessionParts(totalDuration, minSessionMinutes = 45, maxSessionMinutes = 120) {
+  // If task is short or fits within maxSessionMinutes, keep it as a single session
+  if (totalDuration <= maxSessionMinutes) {
+    return [{
+      partIndex: 1,
+      totalParts: 1,
+      durationMinutes: totalDuration,
+    }];
+  }
+
+  const partsCount = Math.ceil(totalDuration / maxSessionMinutes);
+  const parts = [];
+  let rem = totalDuration;
+
+  for (let i = 0; i < partsCount; i++) {
+    const dur = Math.min(rem, maxSessionMinutes);
+    parts.push(dur);
+    rem -= dur;
+  }
+
+  // If the trailing remainder is less than minSessionMinutes, rebalance with the preceding part
+  // so both parts stay within [minSessionMinutes, maxSessionMinutes] if possible
+  if (parts.length >= 2) {
+    const lastIdx = parts.length - 1;
+    const prevIdx = lastIdx - 1;
+    const deficit = minSessionMinutes - parts[lastIdx];
+    if (deficit > 0) {
+      const availableFromPrev = parts[prevIdx] - minSessionMinutes;
+      if (availableFromPrev > 0) {
+        const transfer = Math.min(deficit, availableFromPrev);
+        parts[prevIdx] -= transfer;
+        parts[lastIdx] += transfer;
+      }
+    }
+  }
+
+  return parts.map((dur, idx) => ({
+    partIndex: idx + 1,
+    totalParts: parts.length,
+    durationMinutes: dur,
+  }));
+}
+
+/**
+ * Default routine blocks per Step 2 specifications:
+ * - Day starts at 09:00
+ * - Lunch: 13:00–14:00 (60 minutes)
+ * - Nap: 14:00–14:30 (30 minutes)
+ * - Evening snack: 17:00–17:15 (15 minutes)
+ * - Dinner: 19:00–19:30 (30 minutes)
+ * - Scheduling day ends at 20:00
+ */
+export const DEFAULT_ROUTINE_BLOCKS = [
+  {
+    id: 'lunch',
+    label: 'Lunch',
+    icon: '🍱',
+    enabled: true,
+    startTime: '13:00',
+    durationMinutes: 60,
+  },
+  {
+    id: 'nap',
+    label: 'Nap',
+    icon: '😴',
+    enabled: true,
+    startTime: '14:00',
+    durationMinutes: 30,
+  },
+  {
+    id: 'evening_snack',
+    label: 'Evening snack',
+    icon: '🍵',
+    enabled: true,
+    startTime: '17:00',
+    durationMinutes: 15,
+  },
+  {
+    id: 'dinner',
+    label: 'Dinner',
+    icon: '🍲',
+    enabled: true,
+    startTime: '19:00',
+    durationMinutes: 30,
+  },
+];
+
+export const DEFAULT_ROUTINE_SETTINGS = {
+  dayStartTime: '09:00',
+  dayEndTime: '20:00',
+  blocks: DEFAULT_ROUTINE_BLOCKS,
+};
+
+/**
+ * Validate routine settings times, durations, and detect overlapping blocks.
+ * Requirement 6: Handle overlapping routine blocks explicitly: display a clear validation message and do not silently move the user's selected times.
+ */
+export function validateRoutineSettings(settings) {
+  const errors = [];
+  if (!settings) return { isValid: true, errors: [] };
+
+  const dayStartStr = settings.dayStartTime || '09:00';
+  const dayEndStr = settings.dayEndTime || '20:00';
+
+  const dayStartMin = timeToMinutes(dayStartStr);
+  const dayEndMin = timeToMinutes(dayEndStr);
+
+  if (dayStartMin >= dayEndMin) {
+    errors.push(`Day start time (${dayStartStr}) must be earlier than day end time (${dayEndStr}).`);
+  }
+
+  const blocks = Array.isArray(settings.blocks) ? settings.blocks : [];
+  const enabledBlocks = blocks.filter((b) => b.enabled !== false);
+
+  const processedBlocks = [];
+  for (const block of enabledBlocks) {
+    const label = block.label || block.title || block.id || 'Routine block';
+    const startStr = block.startTime;
+    const dur = Number(block.durationMinutes);
+
+    if (!startStr || !/^\d{1,2}:\d{2}$/.test(String(startStr).trim())) {
+      errors.push(`Routine block "${label}" has an invalid start time: "${startStr}". Expected HH:mm.`);
+      continue;
+    }
+
+    if (isNaN(dur) || dur <= 0) {
+      errors.push(`Routine block "${label}" duration must be greater than 0 minutes.`);
+      continue;
+    }
+
+    const startMin = timeToMinutes(startStr);
+    const endMin = startMin + dur;
+
+    if (startMin < dayStartMin || endMin > dayEndMin) {
+      errors.push(
+        `Routine block "${label}" (${startStr}–${minutesToTime(endMin)}) falls outside configured day window (${dayStartStr}–${dayEndStr}).`
+      );
+    }
+
+    processedBlocks.push({
+      ...block,
+      label,
+      startMin,
+      endMin,
+    });
+  }
+
+  // Check for overlaps between enabled routine blocks
+  for (let i = 0; i < processedBlocks.length; i++) {
+    for (let j = i + 1; j < processedBlocks.length; j++) {
+      const b1 = processedBlocks[i];
+      const b2 = processedBlocks[j];
+      if (b1.startMin < b2.endMin && b2.startMin < b1.endMin) {
+        errors.push(
+          `Overlapping routine blocks: "${b1.label}" (${b1.startTime}–${minutesToTime(b1.endMin)}) overlaps with "${b2.label}" (${b2.startTime}–${minutesToTime(b2.endMin)}). Please adjust times.`
+        );
+      }
+    }
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+  };
+}
+
+/**
  * Create a deterministic schedule across the selected planning horizon:
  * 'today' | 'tomorrow' | 'week' | 'month'.
  *
@@ -184,6 +355,7 @@ export function sortTasksForScheduling(tasks, referenceDate = new Date()) {
  */
 export function createDailySchedule(tasks = [], options = {}) {
   const referenceDate = options.currentDate ? new Date(options.currentDate) : new Date();
+
   const todayStr = toLocalDateString(referenceDate);
   const horizon = options.horizon || 'today';
 
@@ -223,37 +395,194 @@ export function createDailySchedule(tasks = [], options = {}) {
   const firstHorizonDay = horizonDays[0];
   const lastHorizonDay = horizonDays[horizonDays.length - 1];
 
-  // Working window (in minutes from midnight)
-  const startHour = Number(options.startHour ?? 9); // default 9:00 AM
-  const endHour = Number(options.endHour ?? 18);     // default 6:00 PM
+  // Routine settings resolution
+  let routineSettings = null;
+  if (options.routineSettings) {
+    routineSettings = options.routineSettings;
+  } else if (options.routineBlocks) {
+    routineSettings = {
+      dayStartTime: options.dayStartTime || (options.startHour !== undefined ? minutesToTime(options.startHour * 60) : '09:00'),
+      dayEndTime: options.dayEndTime || (options.endHour !== undefined ? minutesToTime(options.endHour * 60) : '20:00'),
+      blocks: options.routineBlocks,
+    };
+  } else if (!options.blockedCommitments) {
+    const dayStartStr = options.dayStartTime || (options.startHour !== undefined ? minutesToTime(options.startHour * 60) : DEFAULT_ROUTINE_SETTINGS.dayStartTime);
+    const dayEndStr = options.dayEndTime || (options.endHour !== undefined ? minutesToTime(options.endHour * 60) : DEFAULT_ROUTINE_SETTINGS.dayEndTime);
+    const startMin = timeToMinutes(dayStartStr);
+    const endMin = timeToMinutes(dayEndStr);
 
-  // Max session length before splitting (default 45 mins - gentle productivity)
-  const maxSessionMinutes = Number(options.maxSessionMinutes ?? 45);
-  const shortBreakMinutes = Number(options.shortBreakMinutes ?? 10);
+    routineSettings = {
+      dayStartTime: dayStartStr,
+      dayEndTime: dayEndStr,
+      blocks: DEFAULT_ROUTINE_BLOCKS.map((b) => {
+        const bStart = timeToMinutes(b.startTime);
+        const bEnd = bStart + b.durationMinutes;
+        return {
+          ...b,
+          enabled: b.enabled && bStart >= startMin && bEnd <= endMin,
+        };
+      }),
+    };
+  }
+
+  // Validate routine settings if provided or defaulted
+  if (routineSettings) {
+    const val = validateRoutineSettings(routineSettings);
+    if (!val.isValid) {
+      return {
+        success: false,
+        error: `Routine block validation error: ${val.errors[0]}`,
+        routineValidationErrors: val.errors,
+        routineSettings,
+        horizon,
+        startDate: firstHorizonDay,
+        endDate: lastHorizonDay,
+        dayWindow: {
+          start: routineSettings.dayStartTime || '09:00',
+          end: routineSettings.dayEndTime || '20:00',
+          totalAvailableMinutes: 0,
+        },
+        metrics: {
+          totalTasks: tasks.length,
+          scheduledTasksCount: 0,
+          completedTasksCount: tasks.filter((t) => t.done).length,
+          overflowTasksCount: tasks.filter((t) => !t.done).length,
+          totalFocusMinutes: 0,
+          totalBreakMinutes: 0,
+          totalRoutineMinutes: 0,
+        },
+        schedule: [],
+        overflowTasks: tasks.filter((t) => !t.done).map((t) => ({
+          taskId: t.id,
+          taskTitle: t.title,
+          reason: `Planning paused due to routine settings conflict: ${val.errors[0]}`,
+          requestedMinutes: t.duration || 30,
+          remainingUnscheduledMinutes: t.duration || 30,
+        })),
+        completedTasks: tasks.filter((t) => t.done),
+        enrichedTasks: tasks,
+      };
+    }
+  }
+
+  // Working window (in minutes from midnight)
+  // Requirement 7: Respect the 09:00 start and 20:00 end boundaries by default.
+  let dayStartMinutes = 9 * 60; // 09:00
+  let dayEndMinutes = 20 * 60;  // 20:00
+
+  if (options.dayStartTime) {
+    dayStartMinutes = timeToMinutes(options.dayStartTime);
+  } else if (routineSettings?.dayStartTime) {
+    dayStartMinutes = timeToMinutes(routineSettings.dayStartTime);
+  } else if (options.startHour !== undefined) {
+    dayStartMinutes = Number(options.startHour) * 60;
+  }
+
+  if (options.dayEndTime) {
+    dayEndMinutes = timeToMinutes(options.dayEndTime);
+  } else if (routineSettings?.dayEndTime) {
+    dayEndMinutes = timeToMinutes(routineSettings.dayEndTime);
+  } else if (options.endHour !== undefined) {
+    dayEndMinutes = Number(options.endHour) * 60;
+  }
+
+  const startHour = Math.floor(dayStartMinutes / 60);
+  const endHour = Math.ceil(dayEndMinutes / 60);
+
+  // Break behavior: 'optional' (default), 'automatic', or 'after_task'
+  const breakBehavior = (options.breakBehavior && ['optional', 'automatic', 'after_task'].includes(options.breakBehavior))
+    ? options.breakBehavior
+    : 'optional';
+
+  // Focus session configuration:
+  const focusSessionMinMinutes = Number(options.focusSessionMinMinutes ?? 45);
+  const maxSessionMinutes = Number(
+    options.focusSessionMaxMinutes ?? options.maxSessionMinutes ?? 120
+  );
+  const minSessionMinutes = Math.min(focusSessionMinMinutes, maxSessionMinutes);
+
+  // Break durations:
+  const defaultBreakMinutes = Number(options.defaultBreakMinutes ?? options.shortBreakMinutes ?? 10);
+  const shortBreakMinutes = defaultBreakMinutes;
   const longBreakMinutes = Number(options.longBreakMinutes ?? 20);
 
-  // Blocked commitments (e.g. Lunch 13:00 - 13:45)
-  const rawBlocked = options.blockedCommitments || [
-    { title: 'Lunch & mindful recharge', start: '13:00', end: '13:45' },
-  ];
+  // Blocked commitments (Routine blocks or legacy blocked commitments)
+  let blockedIntervals = [];
 
-  const blockedIntervals = rawBlocked
-    .map((b) => ({
-      title: b.title,
-      start: timeToMinutes(b.start),
-      end: timeToMinutes(b.end),
-    }))
-    .filter((b) => b.end > b.start)
-    .sort((a, b) => a.start - b.start);
+  if (routineSettings) {
+    const enabledBlocks = (routineSettings.blocks || []).filter((b) => b.enabled !== false);
+    blockedIntervals = enabledBlocks
+      .map((b) => {
+        const start = timeToMinutes(b.startTime);
+        const dur = Number(b.durationMinutes || 30);
+        return {
+          id: b.id,
+          title: b.label || b.title,
+          icon: b.icon || '☕',
+          start,
+          end: start + dur,
+          durationMinutes: dur,
+          type: 'routine',
+        };
+      })
+      .filter((b) => b.end > b.start)
+      .sort((a, b) => a.start - b.start);
+  } else if (options.blockedCommitments) {
+    blockedIntervals = options.blockedCommitments
+      .map((b) => ({
+        id: b.id,
+        title: b.title,
+        icon: b.icon || '☕',
+        start: timeToMinutes(b.start),
+        end: timeToMinutes(b.end),
+        durationMinutes: timeToMinutes(b.end) - timeToMinutes(b.start),
+        type: b.type || 'blocked',
+      }))
+      .filter((b) => b.end > b.start)
+      .sort((a, b) => a.start - b.start);
+  }
 
   function advanceThroughBlocked(currentCursor) {
     let nextCursor = currentCursor;
-    for (const block of blockedIntervals) {
-      if (nextCursor >= block.start && nextCursor < block.end) {
-        nextCursor = block.end;
+    let advanced = true;
+    while (advanced) {
+      advanced = false;
+      for (const block of blockedIntervals) {
+        if (nextCursor >= block.start && nextCursor < block.end) {
+          nextCursor = block.end;
+          advanced = true;
+        }
       }
     }
     return nextCursor;
+  }
+
+  function findNextAvailableSlot(fromCursor, duration, dayEnd) {
+    let searchCursor = fromCursor;
+
+    while (searchCursor + duration <= dayEnd) {
+      searchCursor = advanceThroughBlocked(searchCursor);
+
+      if (searchCursor + duration > dayEnd) {
+        return null;
+      }
+
+      let conflict = null;
+      for (const block of blockedIntervals) {
+        if (block.start < searchCursor + duration && block.end > searchCursor) {
+          conflict = block;
+          break;
+        }
+      }
+
+      if (!conflict) {
+        return searchCursor;
+      }
+
+      searchCursor = conflict.end;
+    }
+
+    return null;
   }
 
   // 2. Separate completed and pending tasks
@@ -297,22 +626,11 @@ export function createDailySchedule(tasks = [], options = {}) {
     if (!taskProgress.has(task.id)) {
       const rawDuration = Number(task.duration || task.estimatedMinutes || 30);
       const totalDuration = Math.min(480, Math.max(5, rawDuration));
-      const partsCount = Math.ceil(totalDuration / maxSessionMinutes);
-      const parts = [];
-      let rem = totalDuration;
-      for (let i = 0; i < partsCount; i++) {
-        const dur = Math.min(rem, maxSessionMinutes);
-        parts.push({
-          partIndex: i + 1,
-          totalParts: partsCount,
-          durationMinutes: dur,
-        });
-        rem -= dur;
-      }
+      const parts = calculateSessionParts(totalDuration, minSessionMinutes, maxSessionMinutes);
       taskProgress.set(task.id, {
         task,
         totalDuration,
-        partsCount,
+        partsCount: parts.length,
         allParts: parts,
         scheduledParts: [],
         remainingParts: [...parts],
@@ -335,16 +653,18 @@ export function createDailySchedule(tasks = [], options = {}) {
       }
     }
 
-    // Blocked commitments for this day
+    // Blocked commitments / routine blocks for this day
     const dayTimelineEvents = [];
     for (const block of blockedIntervals) {
       if (block.end > dayStart && block.start < dayEnd) {
         const actualStart = Math.max(dayStart, block.start);
         const actualEnd = Math.min(dayEnd, block.end);
         dayTimelineEvents.push({
-          id: `blocked-${dayStr}-${block.start}`,
-          type: 'blocked',
+          id: `${block.type || 'routine'}-${dayStr}-${block.id || block.start}`,
+          type: block.type || 'routine',
+          routineBlockId: block.id,
           title: block.title,
+          icon: block.icon,
           date: dayStr,
           scheduledDate: dayStr,
           start: minutesToTime(actualStart),
@@ -417,28 +737,15 @@ export function createDailySchedule(tasks = [], options = {}) {
         const part = state.remainingParts[i];
         const sessionDuration = part.durationMinutes;
 
-        simCursor = advanceThroughBlocked(simCursor);
-
-        let nextBlockedStart = dayEnd;
-        for (const block of blockedIntervals) {
-          if (block.start > simCursor && block.start < nextBlockedStart) {
-            nextBlockedStart = block.start;
-          }
+        const nextSlot = findNextAvailableSlot(simCursor, sessionDuration, dayEnd);
+        if (nextSlot === null) {
+          failureReason = `Not enough available time left in working hours on ${dayStr} (day ends at ${minutesToTime(dayEnd)})`;
+          break;
         }
 
-        const availableSpan = nextBlockedStart - simCursor;
-        if (availableSpan < sessionDuration || simCursor + sessionDuration > dayEnd) {
-          if (nextBlockedStart < dayEnd) {
-            simCursor = advanceThroughBlocked(nextBlockedStart);
-            const postSpan = dayEnd - simCursor;
-            if (postSpan < sessionDuration || simCursor + sessionDuration > dayEnd) {
-              failureReason = `Not enough time left in working hours on ${dayStr} (day ends at ${minutesToTime(dayEnd)})`;
-              break;
-            }
-          } else {
-            failureReason = `Exceeds available working hours on ${dayStr} (ends at ${minutesToTime(dayEnd)})`;
-            break;
-          }
+        if (nextSlot > simCursor) {
+          simCursor = nextSlot;
+          simConsecutive = 0;
         }
 
         const sessionEndMin = simCursor + sessionDuration;
@@ -484,8 +791,8 @@ export function createDailySchedule(tasks = [], options = {}) {
         simCursor = sessionEnd;
         simConsecutive += sessionDuration;
 
-        // Sloth pause between sessions if before dayEnd
-        if (simCursor < dayEnd) {
+        // In 'automatic' mode, insert restorative break after each focus session if before dayEnd
+        if (breakBehavior === 'automatic' && simCursor < dayEnd) {
           simCursor = advanceThroughBlocked(simCursor);
           const isLongBreak = simConsecutive >= 90;
           const breakDuration = isLongBreak ? longBreakMinutes : shortBreakMinutes;
@@ -493,7 +800,8 @@ export function createDailySchedule(tasks = [], options = {}) {
             ? '🍃 Mindful Sloth Pause (Deep rest & stretch)'
             : '🍵 Gentle Break (Hydrate & rest your eyes)';
 
-          if (simCursor + breakDuration <= dayEnd) {
+          const breakSlot = findNextAvailableSlot(simCursor, breakDuration, dayEnd);
+          if (breakSlot === simCursor) {
             plannedSessions.push({
               id: `break-${dayStr}-${simCursor}`,
               type: 'break',
@@ -508,7 +816,39 @@ export function createDailySchedule(tasks = [], options = {}) {
             });
             simCursor += breakDuration;
             if (isLongBreak) simConsecutive = 0;
+          } else {
+            simCursor = advanceThroughBlocked(simCursor);
+            simConsecutive = 0;
           }
+        }
+      }
+
+      // In 'after_task' mode, place a break only after all sessions of this task scheduled for today have completed,
+      // NOT in the middle of a task's focus-session sequence
+      if (breakBehavior === 'after_task' && partsScheduledCount > 0 && simCursor < dayEnd) {
+        simCursor = advanceThroughBlocked(simCursor);
+        const breakDuration = defaultBreakMinutes;
+        const breakTitle = '🍵 Gentle Break (Hydrate & rest your eyes)';
+
+        const breakSlot = findNextAvailableSlot(simCursor, breakDuration, dayEnd);
+        if (breakSlot === simCursor) {
+          plannedSessions.push({
+            id: `break-${dayStr}-${simCursor}`,
+            type: 'break',
+            title: breakTitle,
+            date: dayStr,
+            scheduledDate: dayStr,
+            start: minutesToTime(simCursor),
+            end: minutesToTime(simCursor + breakDuration),
+            startMin: simCursor,
+            endMin: simCursor + breakDuration,
+            durationMinutes: breakDuration,
+          });
+          simCursor += breakDuration;
+          simConsecutive = 0;
+        } else {
+          simCursor = advanceThroughBlocked(simCursor);
+          simConsecutive = 0;
         }
       }
 
@@ -608,7 +948,7 @@ export function createDailySchedule(tasks = [], options = {}) {
       }
     }
 
-    // Combine day items with blocked commitments, sort chronologically
+    // Combine day items with routine blocks / blocked commitments, sort chronologically
     const allDayItems = [...daySchedule, ...dayTimelineEvents].sort((a, b) => a.startMin - b.startMin);
     allScheduleItems.push(...allDayItems);
   }
@@ -656,6 +996,10 @@ export function createDailySchedule(tasks = [], options = {}) {
     .filter((item) => item.type === 'break')
     .reduce((acc, curr) => acc + curr.durationMinutes, 0);
 
+  const totalRoutineMinutes = cleanTimeline
+    .filter((item) => item.type === 'routine' || item.type === 'blocked')
+    .reduce((acc, curr) => acc + curr.durationMinutes, 0);
+
   const scheduledTaskIds = new Set(
     cleanTimeline.filter((item) => item.type === 'task').map((item) => item.taskId)
   );
@@ -670,6 +1014,13 @@ export function createDailySchedule(tasks = [], options = {}) {
       end: minutesToTime(endHour * 60),
       totalAvailableMinutes: (endHour - startHour) * 60,
     },
+    settings: {
+      focusSessionMinMinutes: minSessionMinutes,
+      focusSessionMaxMinutes: maxSessionMinutes,
+      breakBehavior,
+      defaultBreakMinutes,
+    },
+    routineSettings,
     metrics: {
       totalTasks: tasks.length,
       scheduledTasksCount: scheduledTaskIds.size,
@@ -677,6 +1028,7 @@ export function createDailySchedule(tasks = [], options = {}) {
       overflowTasksCount: overflowTasks.length,
       totalFocusMinutes,
       totalBreakMinutes,
+      totalRoutineMinutes,
     },
     schedule: cleanTimeline,
     overflowTasks,

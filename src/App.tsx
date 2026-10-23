@@ -21,9 +21,105 @@ import {
   Edit3,
   AlertTriangle,
   CheckCircle2,
+  SlidersHorizontal,
 } from "lucide-react";
 import "./App.css";
-import type { Task, PlanResponse, HealthStatus, TaskCategory, PlanningHorizon, DurationSource } from "./types";
+import type {
+  Task,
+  PlanResponse,
+  HealthStatus,
+  TaskCategory,
+  PlanningHorizon,
+  DurationSource,
+  BreakBehavior,
+  SchedulerSettings,
+  RoutineSettings,
+  RoutineBlock,
+} from "./types";
+import { DEFAULT_ROUTINE_BLOCKS, DEFAULT_ROUTINE_SETTINGS } from "./types";
+
+function formatBlockSpan(startTime: string, durationMinutes: number): string {
+  try {
+    const [h, m] = startTime.split(":").map(Number);
+    const startMin = (h || 0) * 60 + (m || 0);
+    const endMin = startMin + Number(durationMinutes || 0);
+    const hh = String(Math.floor(endMin / 60) % 24).padStart(2, "0");
+    const mm = String(endMin % 60).padStart(2, "0");
+    return `${startTime} – ${hh}:${mm}`;
+  } catch {
+    return startTime;
+  }
+}
+
+function validateRoutineSettingsFrontend(settings: RoutineSettings): string[] {
+  const errors: string[] = [];
+  if (!settings) return errors;
+
+  const dayStartStr = settings.dayStartTime || "09:00";
+  const dayEndStr = settings.dayEndTime || "20:00";
+
+  const parseTime = (t: string) => {
+    const [h, m] = (t || "00:00").split(":").map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+
+  const dayStartMin = parseTime(dayStartStr);
+  const dayEndMin = parseTime(dayEndStr);
+
+  if (dayStartMin >= dayEndMin) {
+    errors.push(`Day start time (${dayStartStr}) must be earlier than day end time (${dayEndStr}).`);
+  }
+
+  const enabledBlocks = (settings.blocks || []).filter((b) => b.enabled !== false);
+  const processed: Array<{ label: string; startMin: number; endMin: number; startTime: string; duration: number }> = [];
+
+  for (const block of enabledBlocks) {
+    const label = block.label || block.id;
+    if (!block.startTime || !/^\d{1,2}:\d{2}$/.test(block.startTime.trim())) {
+      errors.push(`Routine block "${label}" has an invalid start time: "${block.startTime}". Expected HH:mm.`);
+      continue;
+    }
+    const dur = Number(block.durationMinutes);
+    if (isNaN(dur) || dur <= 0) {
+      errors.push(`Routine block "${label}" duration must be greater than 0 minutes.`);
+      continue;
+    }
+    const startMin = parseTime(block.startTime);
+    const endMin = startMin + dur;
+
+    if (startMin < dayStartMin || endMin > dayEndMin) {
+      const minutesToTime = (m: number) => {
+        const hh = String(Math.floor(m / 60)).padStart(2, "0");
+        const mm = String(m % 60).padStart(2, "0");
+        return `${hh}:${mm}`;
+      };
+      errors.push(
+        `Routine block "${label}" (${block.startTime}–${minutesToTime(endMin)}) falls outside configured day window (${dayStartStr}–${dayEndStr}).`
+      );
+    }
+
+    processed.push({ label, startMin, endMin, startTime: block.startTime, duration: dur });
+  }
+
+  for (let i = 0; i < processed.length; i++) {
+    for (let j = i + 1; j < processed.length; j++) {
+      const b1 = processed[i];
+      const b2 = processed[j];
+      if (b1.startMin < b2.endMin && b2.startMin < b1.endMin) {
+        const minutesToTime = (m: number) => {
+          const hh = String(Math.floor(m / 60)).padStart(2, "0");
+          const mm = String(m % 60).padStart(2, "0");
+          return `${hh}:${mm}`;
+        };
+        errors.push(
+          `Overlapping routine blocks: "${b1.label}" (${b1.startTime}–${minutesToTime(b1.endMin)}) overlaps with "${b2.label}" (${b2.startTime}–${minutesToTime(b2.endMin)}). Please adjust times.`
+        );
+      }
+    }
+  }
+
+  return errors;
+}
 
 function getTodayDateString(): string {
   const now = new Date();
@@ -518,6 +614,66 @@ function App() {
     return "today";
   });
 
+  // Scheduler settings: focus sessions (min: 45, max: 120), break behavior ('optional' | 'automatic' | 'after_task'), break duration (10)
+  const [schedulerSettings, setSchedulerSettings] = useState<SchedulerSettings>(() => {
+    try {
+      const saved = localStorage.getItem("slothmode_scheduler_settings");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          focusSessionMinMinutes: Number(parsed.focusSessionMinMinutes) || 45,
+          focusSessionMaxMinutes: Math.min(120, Math.max(45, Number(parsed.focusSessionMaxMinutes) || 120)),
+          breakBehavior: (["optional", "automatic", "after_task"].includes(parsed.breakBehavior)
+            ? parsed.breakBehavior
+            : "optional") as BreakBehavior,
+          defaultBreakMinutes: Number(parsed.defaultBreakMinutes) || 10,
+        };
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      focusSessionMinMinutes: 45,
+      focusSessionMaxMinutes: 120,
+      breakBehavior: "optional",
+      defaultBreakMinutes: 10,
+    };
+  });
+
+  // Routine Settings (Step 2: Configurable Daily Routine Blocks)
+  const [routineSettings, setRoutineSettings] = useState<RoutineSettings>(() => {
+    try {
+      const saved = localStorage.getItem("slothmode_routine_settings_v1");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") {
+          const blocks = DEFAULT_ROUTINE_BLOCKS.map((defBlock) => {
+            const userBlock = (parsed.blocks || []).find((b: Partial<RoutineBlock>) => b && b.id === defBlock.id);
+            if (userBlock) {
+              return {
+                ...defBlock,
+                enabled: typeof userBlock.enabled === "boolean" ? userBlock.enabled : defBlock.enabled,
+                startTime: typeof userBlock.startTime === "string" ? userBlock.startTime : defBlock.startTime,
+                durationMinutes: Number(userBlock.durationMinutes) || defBlock.durationMinutes,
+              };
+            }
+            return defBlock;
+          });
+          return {
+            dayStartTime: parsed.dayStartTime || DEFAULT_ROUTINE_SETTINGS.dayStartTime,
+            dayEndTime: parsed.dayEndTime || DEFAULT_ROUTINE_SETTINGS.dayEndTime,
+            blocks,
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return DEFAULT_ROUTINE_SETTINGS;
+  });
+
+  const [showRoutineSettings, setShowRoutineSettings] = useState(false);
+
   // Selected date for viewing timeline in Day view
   const [selectedTimelineDate, setSelectedTimelineDate] = useState<string>(() => {
     return getTodayDateString();
@@ -540,6 +696,37 @@ function App() {
       console.warn("Failed to persist horizon:", e);
     }
   }, [planningHorizon]);
+
+  // Persist schedulerSettings in localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("slothmode_scheduler_settings", JSON.stringify(schedulerSettings));
+    } catch (e) {
+      console.warn("Failed to persist scheduler settings:", e);
+    }
+  }, [schedulerSettings]);
+
+  // Persist routineSettings in localStorage separately with version-safe key
+  useEffect(() => {
+    try {
+      localStorage.setItem("slothmode_routine_settings_v1", JSON.stringify(routineSettings));
+    } catch (e) {
+      console.warn("Failed to persist routine settings:", e);
+    }
+  }, [routineSettings]);
+
+  const updateRoutineBlock = (id: string, updates: Partial<RoutineBlock>) => {
+    setRoutineSettings((prev) => ({
+      ...prev,
+      blocks: prev.blocks.map((b) => (b.id === id ? { ...b, ...updates } : b)),
+    }));
+  };
+
+  const resetRoutineSettings = () => {
+    setRoutineSettings(DEFAULT_ROUTINE_SETTINGS);
+  };
+
+  const routineValidationErrors = validateRoutineSettingsFrontend(routineSettings);
 
   // Persist plan in localStorage
   useEffect(() => {
@@ -985,6 +1172,13 @@ function App() {
     if (overrideHorizon && overrideHorizon !== planningHorizon) {
       setPlanningHorizon(overrideHorizon);
     }
+    const routineErrors = validateRoutineSettingsFrontend(routineSettings);
+    if (routineErrors.length > 0) {
+      setErrorMessage(`Routine settings conflict: ${routineErrors[0]}`);
+      setShowRoutineSettings(true);
+      return;
+    }
+
     setIsPlanning(true);
     setErrorMessage(null);
     setPlanFeedback(null);
@@ -997,11 +1191,16 @@ function App() {
           tasks,
           options: {
             horizon: targetHorizon,
-            startHour: 9,
-            endHour: 18,
+            dayStartTime: routineSettings.dayStartTime,
+            dayEndTime: routineSettings.dayEndTime,
+            routineSettings: routineSettings,
             useCurrentTimeAsStart: isReplan,
-            maxSessionMinutes: 45,
-            shortBreakMinutes: 10,
+            focusSessionMinMinutes: schedulerSettings.focusSessionMinMinutes,
+            focusSessionMaxMinutes: schedulerSettings.focusSessionMaxMinutes,
+            breakBehavior: schedulerSettings.breakBehavior,
+            defaultBreakMinutes: schedulerSettings.defaultBreakMinutes,
+            maxSessionMinutes: schedulerSettings.focusSessionMaxMinutes,
+            shortBreakMinutes: schedulerSettings.defaultBreakMinutes,
           },
         }),
       });
@@ -1012,6 +1211,18 @@ function App() {
       }
 
       const planData: PlanResponse = await res.json();
+
+      if (!planData.success) {
+        if (planData.routineValidationErrors && planData.routineValidationErrors.length > 0) {
+          setErrorMessage(`Routine settings conflict: ${planData.routineValidationErrors.join(" ")}`);
+          setShowRoutineSettings(true);
+        } else {
+          setErrorMessage(planData.error || "Could not generate plan.");
+        }
+        setIsPlanning(false);
+        return;
+      }
+
       setPlan(planData);
 
       // Focus timeline on the relevant date
@@ -1475,6 +1686,10 @@ function App() {
                 .filter((item) => item.type === "break")
                 .reduce((acc, curr) => acc + curr.durationMinutes, 0);
 
+              const dayRoutineMins = displayedScheduleItems
+                .filter((item) => item.type === "routine" || item.type === "blocked")
+                .reduce((acc, curr) => acc + curr.durationMinutes, 0);
+
               return (
                 <section className="schedule-section">
                   <div className="schedule-header">
@@ -1500,6 +1715,11 @@ function App() {
                       <span className="schedule-chip">
                         <Coffee size={13} /> {dayBreakMins}m Rest
                       </span>
+                      {dayRoutineMins > 0 && (
+                        <span className="schedule-chip routine-chip">
+                          🍱 {dayRoutineMins}m Protected
+                        </span>
+                      )}
                       <span className="schedule-chip">
                         <Layers size={13} /> {displayedScheduleItems.length} Sessions
                       </span>
@@ -1589,6 +1809,11 @@ function App() {
                                 >
                                   {item.title}
                                 </h4>
+                              ) : item.type === "routine" || item.type === "blocked" ? (
+                                <div className="routine-title-wrap-item">
+                                  <span className="routine-item-icon">{item.icon || "🍱"}</span>
+                                  <h4 className="item-title routine-title">{item.title}</h4>
+                                </div>
                               ) : (
                                 <h4
                                   className="item-title"
@@ -1596,6 +1821,12 @@ function App() {
                                 >
                                   {item.title}
                                 </h4>
+                              )}
+
+                              {(item.type === "routine" || item.type === "blocked") && (
+                                <span className="routine-protected-badge">
+                                  Protected Routine
+                                </span>
                               )}
 
                               {item.partIndex &&
@@ -1637,6 +1868,8 @@ function App() {
                             <p className="item-desc">
                               {item.type === "break"
                                 ? "Step away from the screen, stretch, and let your subconscious process what you just did."
+                                : item.type === "routine" || item.type === "blocked"
+                                ? "Protected daily routine block · No tasks or breaks scheduled during this time."
                                 : item.schedulingTip ||
                                   "Focus with zero multitasking during this block."}
                             </p>
@@ -1713,6 +1946,21 @@ function App() {
                     ))}
                   </div>
 
+                  {/* Routine & Break Settings Toggle */}
+                  <button
+                    type="button"
+                    className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
+                    onClick={() => setShowRoutineSettings((prev) => !prev)}
+                    title="Configure focus sessions and break routine"
+                    aria-expanded={showRoutineSettings}
+                  >
+                    <SlidersHorizontal size={13} />
+                    <span>Breaks:</span>
+                    <strong style={{ textTransform: "capitalize" }}>
+                      {schedulerSettings.breakBehavior === "after_task" ? "After Task" : schedulerSettings.breakBehavior}
+                    </strong>
+                  </button>
+
                   {plan && (
                     <button
                       className="replan-button"
@@ -1740,6 +1988,251 @@ function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Routine & Flexible Breaks Settings Panel */}
+              {showRoutineSettings && (
+                <div className="routine-settings-card" role="region" aria-label="Routine and Break Settings">
+                  <div className="routine-settings-header">
+                    <div className="routine-title-wrap">
+                      <Coffee size={16} className="routine-icon" />
+                      <div>
+                        <h4>Routine & Flexible Breaks</h4>
+                        <p>Tailor your focus session lengths and break rhythm to match your study flow.</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="routine-close-btn"
+                      onClick={() => setShowRoutineSettings(false)}
+                      title="Close settings"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  <div className="routine-settings-grid">
+                    {/* 1. Break Behavior */}
+                    <div className="routine-setting-group">
+                      <label className="routine-label">
+                        BREAK BEHAVIOR
+                        <span className="routine-sublabel">When should pauses happen?</span>
+                      </label>
+                      <div className="routine-pill-group" role="radiogroup" aria-label="Break behavior">
+                        <button
+                          type="button"
+                          className={`routine-pill ${schedulerSettings.breakBehavior === "optional" ? "active" : ""}`}
+                          onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "optional" }))}
+                        >
+                          ☕ Optional (Default)
+                        </button>
+                        <button
+                          type="button"
+                          className={`routine-pill ${schedulerSettings.breakBehavior === "automatic" ? "active" : ""}`}
+                          onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "automatic" }))}
+                        >
+                          ⏱ Automatic
+                        </button>
+                        <button
+                          type="button"
+                          className={`routine-pill ${schedulerSettings.breakBehavior === "after_task" ? "active" : ""}`}
+                          onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "after_task" }))}
+                        >
+                          🏁 After Task
+                        </button>
+                      </div>
+                      <p className="routine-behavior-hint">
+                        {schedulerSettings.breakBehavior === "optional" &&
+                          "Sessions run back-to-back when time allows. You decide when to pause rather than forcing breaks into your plan."}
+                        {schedulerSettings.breakBehavior === "automatic" &&
+                          `Automatically schedules a gentle ${schedulerSettings.defaultBreakMinutes}m pause after each focus session.`}
+                        {schedulerSettings.breakBehavior === "after_task" &&
+                          `Keeps multi-session tasks focused back-to-back, placing a ${schedulerSettings.defaultBreakMinutes}m break only after finishing the task.`}
+                      </p>
+                    </div>
+
+                    {/* 2. Focus Session Length (Min 45m, Max 120m) */}
+                    <div className="routine-setting-group">
+                      <label className="routine-label">
+                        MAX FOCUS SESSION
+                        <span className="routine-sublabel">Long tasks split into sessions up to this limit</span>
+                      </label>
+                      <div className="routine-pill-group" role="radiogroup" aria-label="Max focus session length">
+                        {[45, 60, 90, 120].map((mins) => (
+                          <button
+                            key={mins}
+                            type="button"
+                            className={`routine-pill ${schedulerSettings.focusSessionMaxMinutes === mins ? "active" : ""}`}
+                            onClick={() => setSchedulerSettings((s) => ({ ...s, focusSessionMaxMinutes: mins }))}
+                          >
+                            {mins}m {mins === 120 ? "(Default)" : ""}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="routine-behavior-hint">
+                        Minimum focus session: 45m. Tasks longer than {schedulerSettings.focusSessionMaxMinutes}m split gently into 45–{schedulerSettings.focusSessionMaxMinutes}m sessions without losing effort.
+                      </p>
+                    </div>
+
+                    {/* 3. Break Duration */}
+                    <div className="routine-setting-group">
+                      <label className="routine-label">
+                        DEFAULT BREAK DURATION
+                        <span className="routine-sublabel">Length of restorative pauses</span>
+                      </label>
+                      <div className="routine-pill-group" role="radiogroup" aria-label="Default break duration">
+                        {[5, 10, 15, 20].map((mins) => (
+                          <button
+                            key={mins}
+                            type="button"
+                            className={`routine-pill ${schedulerSettings.defaultBreakMinutes === mins ? "active" : ""}`}
+                            onClick={() => setSchedulerSettings((s) => ({ ...s, defaultBreakMinutes: mins }))}
+                          >
+                            {mins}m {mins === 10 ? "(Default)" : ""}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="routine-behavior-hint">
+                        {schedulerSettings.breakBehavior === "optional"
+                          ? "Saved for your restorative pauses when you decide to take them."
+                          : `Inserted automatically in ${schedulerSettings.breakBehavior === "automatic" ? "automatic" : "after-task"} mode.`}
+                      </p>
+                    </div>
+
+                    {/* Routine Validation Banner */}
+                    {routineValidationErrors.length > 0 && (
+                      <div className="routine-validation-banner" role="alert">
+                        <div className="routine-validation-header">
+                          <AlertTriangle size={15} />
+                          <span>Protected Routine Time Conflict</span>
+                        </div>
+                        <ul>
+                          {routineValidationErrors.map((err, idx) => (
+                            <li key={idx}>{err}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* 4. Protected Daily Routine Blocks & Day Boundaries */}
+                    <div className="routine-blocks-editor">
+                      <div className="routine-blocks-top-bar">
+                        <div className="routine-blocks-heading">
+                          <span style={{ fontSize: "16px" }}>🍱</span>
+                          <div>
+                            <h5>Protected Daily Routine Blocks</h5>
+                            <p>Non-working protected intervals that the scheduler plans your study flow around.</p>
+                          </div>
+                        </div>
+                        <div className="routine-window-controls">
+                          <div className="routine-window-field">
+                            <span>Day starts:</span>
+                            <input
+                              type="time"
+                              className="routine-time-input"
+                              value={routineSettings.dayStartTime}
+                              onChange={(e) =>
+                                setRoutineSettings((s) => ({ ...s, dayStartTime: e.target.value }))
+                              }
+                              aria-label="Day start time"
+                            />
+                          </div>
+                          <div className="routine-window-field">
+                            <span>Day ends:</span>
+                            <input
+                              type="time"
+                              className="routine-time-input"
+                              value={routineSettings.dayEndTime}
+                              onChange={(e) =>
+                                setRoutineSettings((s) => ({ ...s, dayEndTime: e.target.value }))
+                              }
+                              aria-label="Day end time"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            className="routine-reset-btn"
+                            onClick={resetRoutineSettings}
+                            title="Reset routine times and blocks to default"
+                          >
+                            Reset Defaults
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="routine-blocks-list">
+                        {routineSettings.blocks.map((block) => {
+                          const timeSpan = formatBlockSpan(block.startTime, block.durationMinutes);
+                          return (
+                            <div
+                              key={block.id}
+                              className={`routine-block-row ${!block.enabled ? "disabled" : ""}`}
+                            >
+                              <div className="routine-block-left">
+                                <input
+                                  type="checkbox"
+                                  className="routine-checkbox"
+                                  checked={block.enabled}
+                                  onChange={(e) =>
+                                    updateRoutineBlock(block.id, { enabled: e.target.checked })
+                                  }
+                                  id={`routine-check-${block.id}`}
+                                  aria-label={`Enable or disable ${block.label}`}
+                                />
+                                <div className="routine-block-label-wrap">
+                                  <label
+                                    htmlFor={`routine-check-${block.id}`}
+                                    className="routine-block-title"
+                                    style={{ cursor: "pointer" }}
+                                  >
+                                    <span>{block.icon || "🍱"}</span>
+                                    <span>{block.label}</span>
+                                  </label>
+                                  <span className="routine-block-timespan">
+                                    {block.enabled
+                                      ? `${timeSpan} (${block.durationMinutes}m)`
+                                      : "Disabled"}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="routine-block-inputs">
+                                <input
+                                  type="time"
+                                  className="routine-time-input"
+                                  value={block.startTime}
+                                  disabled={!block.enabled}
+                                  onChange={(e) =>
+                                    updateRoutineBlock(block.id, { startTime: e.target.value })
+                                  }
+                                  aria-label={`${block.label} start time`}
+                                />
+                                <div className="routine-duration-wrap">
+                                  <input
+                                    type="number"
+                                    min="5"
+                                    max="240"
+                                    step="5"
+                                    className="routine-duration-input"
+                                    value={block.durationMinutes}
+                                    disabled={!block.enabled}
+                                    onChange={(e) =>
+                                      updateRoutineBlock(block.id, {
+                                        durationMinutes: Math.max(5, Number(e.target.value) || 5),
+                                      })
+                                    }
+                                    aria-label={`${block.label} duration in minutes`}
+                                  />
+                                  <span>min</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="task-list">
                 {tasks.length === 0 ? (
@@ -1988,6 +2481,19 @@ function App() {
                 </button>
                 <button
                   type="button"
+                  className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
+                  onClick={() => setShowRoutineSettings((prev) => !prev)}
+                  title="Configure focus sessions and break routine"
+                  style={{ padding: "7px 11px", fontSize: "12px" }}
+                >
+                  <SlidersHorizontal size={13} />
+                  <span>Breaks:</span>
+                  <strong style={{ textTransform: "capitalize" }}>
+                    {schedulerSettings.breakBehavior === "after_task" ? "After Task" : schedulerSettings.breakBehavior}
+                  </strong>
+                </button>
+                <button
+                  type="button"
                   className="plan-button"
                   onClick={() => generatePlan(false, "week")}
                   disabled={isPlanning || tasks.length === 0}
@@ -2118,6 +2624,54 @@ function App() {
                       </div>
 
                       <div className="col-tasks-list">
+                        {/* Protected routine blocks for this day */}
+                        {(() => {
+                          const dayRoutines = (plan?.schedule || []).filter(
+                            (s) =>
+                              (s.type === "routine" || s.type === "blocked") &&
+                              (s.date === dayString || s.scheduledDate === dayString)
+                          );
+                          const blocksToShow =
+                            dayRoutines.length > 0
+                              ? dayRoutines.map((r) => ({
+                                  id: r.id,
+                                  title: r.title,
+                                  icon: r.icon || "🍱",
+                                  start: r.start,
+                                  end: r.end,
+                                  durationMinutes: r.durationMinutes,
+                                }))
+                              : routineSettings.blocks
+                                  .filter((b) => b.enabled)
+                                  .map((b) => ({
+                                    id: `preview-${dayString}-${b.id}`,
+                                    title: b.label,
+                                    icon: b.icon || "🍱",
+                                    start: b.startTime,
+                                    end: formatBlockSpan(b.startTime, b.durationMinutes).split(" – ")[1] || b.startTime,
+                                    durationMinutes: b.durationMinutes,
+                                  }));
+
+                          return blocksToShow.map((rb) => (
+                            <div
+                              key={rb.id}
+                              className="cal-routine-card"
+                              title={`Protected routine: ${rb.title} (${rb.start}–${rb.end})`}
+                            >
+                              <div className="cal-routine-top">
+                                <span className="cal-routine-icon">{rb.icon}</span>
+                                <span className="cal-routine-title">{rb.title}</span>
+                              </div>
+                              <div className="cal-routine-time">
+                                <span>
+                                  {rb.start}–{rb.end}
+                                </span>
+                                <span className="cal-routine-tag">Protected</span>
+                              </div>
+                            </div>
+                          ));
+                        })()}
+
                         {dayTasks.length === 0 ? (
                           <div className="col-empty-msg">No tasks</div>
                         ) : (
@@ -2356,6 +2910,19 @@ function App() {
                 </button>
                 <button
                   type="button"
+                  className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
+                  onClick={() => setShowRoutineSettings((prev) => !prev)}
+                  title="Configure focus sessions and break routine"
+                  style={{ padding: "7px 11px", fontSize: "12px" }}
+                >
+                  <SlidersHorizontal size={13} />
+                  <span>Breaks:</span>
+                  <strong style={{ textTransform: "capitalize" }}>
+                    {schedulerSettings.breakBehavior === "after_task" ? "After Task" : schedulerSettings.breakBehavior}
+                  </strong>
+                </button>
+                <button
+                  type="button"
                   className="plan-button"
                   onClick={() => generatePlan(false, "month")}
                   disabled={isPlanning || tasks.length === 0}
@@ -2525,6 +3092,15 @@ function App() {
                           <span className="month-more-badge">
                             +{overflowCount} more
                           </span>
+                        )}
+
+                        {routineSettings.blocks.some((b) => b.enabled) && (
+                          <div
+                            className="month-routine-chip"
+                            title="Protected daily routine blocks active on this day"
+                          >
+                            <span>🍱 Routine</span>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -2714,6 +3290,34 @@ function App() {
 
               {/* Day Tasks List */}
               <div className="day-detail-task-list">
+                {/* Protected routine blocks for this day */}
+                {routineSettings.blocks.some((b) => b.enabled) && (
+                  <div className="day-detail-routine-section">
+                    <div className="day-detail-routine-header">
+                      <h4>
+                        <span>🍱</span>
+                        <span>Protected Routine Times</span>
+                      </h4>
+                      <span className="cal-routine-tag">Reserved</span>
+                    </div>
+                    <div className="day-detail-routine-list">
+                      {routineSettings.blocks
+                        .filter((b) => b.enabled)
+                        .map((b) => (
+                          <div key={b.id} className="day-detail-routine-item">
+                            <div className="day-detail-routine-item-left">
+                              <span>{b.icon || "🍱"}</span>
+                              <strong>{b.label}</strong>
+                            </div>
+                            <span className="day-detail-routine-item-time">
+                              {formatBlockSpan(b.startTime, b.durationMinutes)} ({b.durationMinutes}m)
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
                 {(() => {
                   const dayTasks = tasks.filter(
                     (t) => t.scheduledDate === selectedDayDate
