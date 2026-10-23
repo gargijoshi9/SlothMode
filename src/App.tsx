@@ -37,6 +37,24 @@ import type {
   RoutineBlock,
 } from "./types";
 import { DEFAULT_ROUTINE_BLOCKS, DEFAULT_ROUTINE_SETTINGS } from "./types";
+import {
+  getTodayDateString,
+  getTomorrowDateString,
+  toLocalDateString,
+  getDatesInRange,
+  getMondayOfWeek,
+  getDaysOfWeek,
+  formatWeekHeading,
+  formatMonthHeading,
+  getMonthGrid,
+  formatDayDetailHeading,
+  isTaskOverdue,
+  formatDisplayDate,
+  formatDisplayDeadline,
+  parseLocalDate,
+  formatLocalDate,
+} from "./dateUtils";
+import { parseExplicitDuration } from "./durationParser";
 
 function formatBlockSpan(startTime: string, durationMinutes: number): string {
   try {
@@ -121,270 +139,8 @@ function validateRoutineSettingsFrontend(settings: RoutineSettings): string[] {
   return errors;
 }
 
-function getTodayDateString(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function getTomorrowDateString(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function toLocalDateString(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function getDatesInRange(startStr: string, endStr: string): string[] {
-  const dates: string[] = [];
-  if (!startStr || !endStr) return dates;
-  const start = new Date(startStr + "T00:00:00");
-  const end = new Date(endStr + "T00:00:00");
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return dates;
-  const cur = new Date(start);
-  let count = 0;
-  while (cur <= end && count < 60) {
-    dates.push(toLocalDateString(cur));
-    cur.setDate(cur.getDate() + 1);
-    count++;
-  }
-  return dates;
-}
-
-function getMondayOfWeek(d: Date): Date {
-  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const day = date.getDay(); // 0 is Sunday, 1 is Monday, ..., 6 is Saturday
-  const diff = (day === 0 ? -6 : 1) - day;
-  date.setDate(date.getDate() + diff);
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function getDaysOfWeek(mondayDate: Date): Date[] {
-  const days: Date[] = [];
-  for (let i = 0; i < 7; i++) {
-    days.push(
-      new Date(
-        mondayDate.getFullYear(),
-        mondayDate.getMonth(),
-        mondayDate.getDate() + i
-      )
-    );
-  }
-  return days;
-}
-
-function formatWeekHeading(mondayDate: Date): string {
-  const sundayDate = new Date(
-    mondayDate.getFullYear(),
-    mondayDate.getMonth(),
-    mondayDate.getDate() + 6
-  );
-
-  const sameMonth = mondayDate.getMonth() === sundayDate.getMonth();
-  const sameYear = mondayDate.getFullYear() === sundayDate.getFullYear();
-
-  const monMonth = mondayDate.toLocaleDateString(undefined, { month: "short" });
-  const sunMonth = sundayDate.toLocaleDateString(undefined, { month: "short" });
-
-  if (sameMonth && sameYear) {
-    return `${monMonth} ${mondayDate.getDate()} – ${sundayDate.getDate()}, ${mondayDate.getFullYear()}`;
-  }
-  if (sameYear) {
-    return `${monMonth} ${mondayDate.getDate()} – ${sunMonth} ${sundayDate.getDate()}, ${mondayDate.getFullYear()}`;
-  }
-  return `${monMonth} ${mondayDate.getDate()}, ${mondayDate.getFullYear()} – ${sunMonth} ${sundayDate.getDate()}, ${sundayDate.getFullYear()}`;
-}
-
-function formatMonthHeading(date: Date): string {
-  return date.toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-interface MonthGridCell {
-  date: Date;
-  dateString: string;
-  dayNumber: number;
-  isCurrentMonth: boolean;
-  isToday: boolean;
-}
-
-function getMonthGrid(displayedMonthDate: Date): MonthGridCell[] {
-  const year = displayedMonthDate.getFullYear();
-  const month = displayedMonthDate.getMonth();
-
-  const firstDay = new Date(year, month, 1);
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  // Day of week: 0 = Sun, 1 = Mon, ..., 6 = Sat
-  // We want Monday as first column (0), Sunday as last column (6)
-  const dayOfWeek = firstDay.getDay();
-  const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-
-  const todayStr = getTodayDateString();
-  const cells: MonthGridCell[] = [];
-
-  // Previous month filler days
-  const prevMonthDaysCount = new Date(year, month, 0).getDate();
-  for (let i = mondayOffset - 1; i >= 0; i--) {
-    const dayNum = prevMonthDaysCount - i;
-    const cellDate = new Date(year, month - 1, dayNum);
-    const dateString = toLocalDateString(cellDate);
-    cells.push({
-      date: cellDate,
-      dateString,
-      dayNumber: dayNum,
-      isCurrentMonth: false,
-      isToday: dateString === todayStr,
-    });
-  }
-
-  // Current month days
-  for (let d = 1; d <= daysInMonth; d++) {
-    const cellDate = new Date(year, month, d);
-    const dateString = toLocalDateString(cellDate);
-    cells.push({
-      date: cellDate,
-      dateString,
-      dayNumber: d,
-      isCurrentMonth: true,
-      isToday: dateString === todayStr,
-    });
-  }
-
-  // Next month filler days to complete 7-day rows
-  const remaining = (7 - (cells.length % 7)) % 7;
-  for (let i = 1; i <= remaining; i++) {
-    const cellDate = new Date(year, month + 1, i);
-    const dateString = toLocalDateString(cellDate);
-    cells.push({
-      date: cellDate,
-      dateString,
-      dayNumber: i,
-      isCurrentMonth: false,
-      isToday: dateString === todayStr,
-    });
-  }
-
-  return cells;
-}
-
-function formatDayDetailHeading(dateStr: string): string {
-  try {
-    const [y, m, d] = dateStr.split("-").map(Number);
-    if (!y || !m || !d) return dateStr;
-    const date = new Date(y, m - 1, d);
-    return date.toLocaleDateString(undefined, {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return dateStr;
-  }
-}
-
-function isTaskOverdue(task: Task, now = new Date()): boolean {
-  if (task.done || !task.deadline) return false;
-  const trimmed = task.deadline.trim();
-  if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
-    const [h, m] = trimmed.split(":").map(Number);
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0, 0);
-    return d < now;
-  }
-  const d = new Date(trimmed);
-  if (isNaN(d.getTime())) return false;
-  return d < now;
-}
-
-function formatDisplayDate(dateStr?: string | null): string {
-  if (!dateStr) return "";
-  try {
-    const [y, m, d] = dateStr.split("-").map(Number);
-    if (!y || !m || !d) return dateStr;
-    const target = new Date(y, m - 1, d);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    if (target.getTime() === today.getTime()) {
-      return "Today";
-    }
-    if (target.getTime() === tomorrow.getTime()) {
-      return "Tomorrow";
-    }
-    return target.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return dateStr;
-  }
-}
-
-function formatDisplayDeadline(deadlineStr?: string | null): string {
-  if (!deadlineStr) return "";
-  const trimmed = deadlineStr.trim();
-  if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
-    return trimmed;
-  }
-  try {
-    const d = new Date(trimmed);
-    if (isNaN(d.getTime())) return trimmed;
-
-    const today = new Date();
-    const isSameYear = d.getFullYear() === today.getFullYear();
-    const isToday =
-      d.getDate() === today.getDate() &&
-      d.getMonth() === today.getMonth() &&
-      isSameYear;
-
-    const timeStr = d.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-
-    if (isToday) {
-      return `Today, ${timeStr}`;
-    }
-
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const isTomorrow =
-      d.getDate() === tomorrow.getDate() &&
-      d.getMonth() === tomorrow.getMonth() &&
-      d.getFullYear() === tomorrow.getFullYear();
-
-    if (isTomorrow) {
-      return `Tomorrow, ${timeStr}`;
-    }
-
-    const dateStr = d.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: isSameYear ? undefined : "numeric",
-    });
-
-    return `${dateStr} at ${timeStr}`;
-  } catch {
-    return deadlineStr;
-  }
-}
+// Note: Date formatting and calculation utilities are imported from ./dateUtils.ts
+// to guarantee consistent device-local calendar semantics across views and components.
 
 const initialTasks: Task[] = [
   {
@@ -487,6 +243,15 @@ function renderDurationBadge(task: Task, onReestimate?: () => void) {
         ✏️ Manual
       </span>
     );
+  } else if (source === "explicit") {
+    badge = (
+      <span
+        className="duration-source-badge explicit"
+        title={task.estimationReasoning || "Explicit duration parsed from task title or description"}
+      >
+        🎯 Explicit
+      </span>
+    );
   }
 
   return (
@@ -520,14 +285,45 @@ function App() {
       if (saved) {
         const parsed: Task[] = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.map((t) => ({
-            ...t,
-            scheduledDate: t.scheduledDate || null,
-            deadline: t.deadline || null,
-            duration: Number(t.duration) || 30,
-            durationSource: (t.durationSource as DurationSource) || (t.aiGenerated ? "ai_estimated" : "manual"),
-            isEstimatingDuration: false,
-          }));
+          return parsed.map((t) => {
+            // Safely normalize scheduledDate to local YYYY-MM-DD if legacy ISO timestamp was saved
+            let normDate = t.scheduledDate || null;
+            if (normDate && typeof normDate === "string") {
+              const trimmed = normDate.trim();
+              if (trimmed.includes("T") || trimmed.includes(" ")) {
+                const parsedDate = parseLocalDate(trimmed);
+                if (parsedDate && !isNaN(parsedDate.getTime())) {
+                  normDate = formatLocalDate(parsedDate);
+                }
+              }
+            }
+
+            const explicit = parseExplicitDuration(t.title);
+            let src = t.durationSource as DurationSource;
+            let dur = Number(t.duration) || 30;
+            if (!src) {
+              if (explicit) {
+                src = "explicit";
+                dur = explicit.durationMinutes;
+              } else if (t.aiGenerated) {
+                src = "ai_estimated";
+              } else {
+                src = "manual";
+              }
+            } else if (src !== "manual" && explicit) {
+              src = "explicit";
+              dur = explicit.durationMinutes;
+            }
+
+            return {
+              ...t,
+              scheduledDate: normDate,
+              deadline: t.deadline || null,
+              duration: dur,
+              durationSource: src,
+              isEstimatingDuration: false,
+            };
+          });
         }
       }
     } catch {
@@ -546,6 +342,39 @@ function App() {
     }
     return null;
   });
+
+  // Device-local calendar date state tracking and automatic refresh across midnight/focus
+  const [currentLocalDateStr, setCurrentLocalDateStr] = useState<string>(getTodayDateString);
+
+  useEffect(() => {
+    const checkDateChange = () => {
+      const latestToday = getTodayDateString();
+      setCurrentLocalDateStr((prev) => {
+        if (prev !== latestToday) {
+          // If the draft scheduled date was set to yesterday, update it to the new today
+          setDraftScheduledDate((prevDraft) => (prevDraft === prev ? latestToday : prevDraft));
+          return latestToday;
+        }
+        return prev;
+      });
+    };
+
+    const interval = setInterval(checkDateChange, 30000); // Check every 30s
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        checkDateChange();
+      }
+    };
+
+    window.addEventListener("focus", checkDateChange);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", checkDateChange);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
 
   // Task adding form state
   const [draft, setDraft] = useState("");
@@ -803,6 +632,33 @@ function App() {
       inFlightEstimations.delete(taskId);
     }
 
+    // Safety guard: if task has manually set duration, do not overwrite unless explicit reestimate
+    if (taskToEstimate.durationSource === "manual" && !isExplicitReestimate) {
+      return;
+    }
+
+    // Explicit duration check: do not call Ollama if explicit duration is present!
+    if (!isExplicitReestimate) {
+      const explicit = parseExplicitDuration(taskToEstimate.title);
+      if (explicit) {
+        setTasks((current) =>
+          current.map((t) =>
+            t.id === taskId
+              ? {
+                  ...t,
+                  duration: explicit.durationMinutes,
+                  durationSource: "explicit",
+                  durationConfidence: "high",
+                  estimationReasoning: explicit.reasoning,
+                  isEstimatingDuration: false,
+                }
+              : t
+          )
+        );
+        return;
+      }
+    }
+
     const controller = new AbortController();
     inFlightEstimations.set(taskId, {
       title: taskToEstimate.title,
@@ -836,7 +692,7 @@ function App() {
       inFlightEstimations.delete(taskId);
 
       const newDuration = Math.max(5, Math.min(480, Number(data.estimatedMinutes) || taskToEstimate.duration || 30));
-      const newSource: DurationSource = data.aiGenerated ? "ai_estimated" : "fallback_estimated";
+      const newSource: DurationSource = data.durationSource || (data.aiGenerated ? "ai_estimated" : "fallback_estimated");
 
       setTasks((current) => {
         const target = current.find((t) => t.id === taskId);
@@ -905,7 +761,7 @@ function App() {
         )
       );
     }
-  }, []);
+  }, [setEditingTask, setEditForm]);
 
   function toggleExpandTask(id: number) {
     setExpandedTaskIds((prev) =>
@@ -917,14 +773,18 @@ function App() {
     event.preventDefault();
     if (!draft.trim()) return;
 
-    // Requirement 1: Assign provisional duration of 30 minutes immediately. Never prompt for duration.
+    const cleanTitle = draft.trim();
+    const explicit = parseExplicitDuration(cleanTitle);
+
     const newTask: Task = {
       id: Date.now(),
-      title: draft.trim(),
+      title: cleanTitle,
       category: "personal",
-      duration: 30, // 30-minute provisional duration
-      durationSource: "provisional",
-      isEstimatingDuration: true,
+      duration: explicit ? explicit.durationMinutes : 30, // Explicit duration or 30m provisional
+      durationSource: explicit ? "explicit" : "provisional",
+      isEstimatingDuration: !explicit,
+      durationConfidence: explicit ? "high" : undefined,
+      estimationReasoning: explicit ? explicit.reasoning : undefined,
       priority: "Medium",
       urgency: "medium",
       done: false,
@@ -933,7 +793,7 @@ function App() {
       subtasks: [
         {
           id: `sub-${Date.now()}-1`,
-          title: `Start with initial step for: ${draft.trim().slice(0, 32)}`,
+          title: `Start with initial step for: ${cleanTitle.slice(0, 32)}`,
           done: false,
         },
         {
@@ -942,7 +802,9 @@ function App() {
           done: false,
         },
       ],
-      schedulingTip: "Take it slow and steady. Work in focused intervals.",
+      schedulingTip: explicit
+        ? `Paced for your explicit ${explicit.durationMinutes}m focus session.`
+        : "Take it slow and steady. Work in focused intervals.",
       aiGenerated: false,
     };
 
@@ -951,8 +813,10 @@ function App() {
     setDraftDeadline("");
     setShowDeadlineInput(false);
 
-    // Requirement 2 & 3: Run dynamic estimation asynchronously after task creation
-    triggerAsyncEstimation(newTask, false);
+    // Only run dynamic Ollama estimation if no explicit duration was found in title!
+    if (!explicit) {
+      triggerAsyncEstimation(newTask, false);
+    }
   }
 
   function toggleTask(id: number) {
@@ -1106,13 +970,28 @@ function App() {
     e.preventDefault();
     if (!editingTask || !editForm.title.trim()) return;
 
-    // Requirement 4 & 5: When saved via edit modal, mark durationSource as 'manual'
+    const userChangedDuration = Number(editForm.duration) !== editingTask.duration;
+    const explicit = parseExplicitDuration(editForm.title.trim());
+    let finalDuration = Math.max(5, Math.min(480, Number(editForm.duration) || 30));
+    let finalSource: DurationSource = "manual";
+
+    if (userChangedDuration) {
+      finalSource = "manual";
+    } else if (explicit) {
+      finalDuration = explicit.durationMinutes;
+      finalSource = "explicit";
+    } else if (editingTask.durationSource) {
+      finalSource = editingTask.durationSource;
+    }
+
     const updated: Task = {
       ...editingTask,
       title: editForm.title.trim(),
       scheduledDate: editForm.scheduledDate.trim() || null,
-      duration: Math.max(5, Math.min(480, Number(editForm.duration) || 30)),
-      durationSource: "manual",
+      duration: finalDuration,
+      durationSource: finalSource,
+      durationConfidence: finalSource === "explicit" ? "high" : editingTask.durationConfidence,
+      estimationReasoning: finalSource === "explicit" && explicit ? explicit.reasoning : editingTask.estimationReasoning,
       isEstimatingDuration: false,
       deadline: editForm.deadline.trim() || null,
       done: editForm.done,
@@ -1191,6 +1070,9 @@ function App() {
           tasks,
           options: {
             horizon: targetHorizon,
+            currentDate: getTodayDateString(),
+            clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            clientTimezoneOffset: new Date().getTimezoneOffset(),
             dayStartTime: routineSettings.dayStartTime,
             dayEndTime: routineSettings.dayEndTime,
             routineSettings: routineSettings,
@@ -1323,7 +1205,7 @@ function App() {
   const monthRemainingCount = monthTasks.filter((t) => !t.done).length;
   const monthOverdueCount = monthTasks.filter((t) => isTaskOverdue(t)).length;
 
-  const monthGridCells = getMonthGrid(currentMonthDate);
+  const monthGridCells = getMonthGrid(currentMonthDate, currentLocalDateStr);
 
   return (
     <main className="app-shell">
@@ -1696,7 +1578,7 @@ function App() {
                     <div>
                       <p className="eyebrow">YOUR GENTLE TIMELINE</p>
                       <h2>
-                        {activeTimelineDate === getTodayDateString()
+                        {activeTimelineDate === currentLocalDateStr
                           ? "Today"
                           : activeTimelineDate === getTomorrowDateString()
                           ? "Tomorrow"
@@ -2586,7 +2468,7 @@ function App() {
               <div className="calendar-grid">
                 {weekDays.map((dayDate) => {
                   const dayString = toLocalDateString(dayDate);
-                  const isToday = dayString === getTodayDateString();
+                  const isToday = dayString === currentLocalDateStr;
                   const dayTasks = tasks.filter(
                     (t) => t.scheduledDate === dayString
                   );

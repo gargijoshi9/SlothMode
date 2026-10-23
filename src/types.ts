@@ -9,7 +9,7 @@ export type Subtask = {
 export type TaskCategory = 'college' | 'exam_prep' | 'chore' | 'health' | 'personal' | 'work' | string;
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low' | 'High' | 'Medium' | 'Low';
 
-export type DurationSource = 'provisional' | 'ai_estimated' | 'fallback_estimated' | 'manual';
+export type DurationSource = 'provisional' | 'ai_estimated' | 'fallback_estimated' | 'manual' | 'explicit' | 'ai' | 'fallback';
 
 export type Task = {
   id: number;
@@ -136,6 +136,8 @@ export const DEFAULT_ROUTINE_SETTINGS: RoutineSettings = {
 export interface SchedulingOptions {
   horizon?: PlanningHorizon;
   currentDate?: string;
+  clientTimezone?: string;
+  clientTimezoneOffset?: number;
   startHour?: number;
   endHour?: number;
   dayStartTime?: string;

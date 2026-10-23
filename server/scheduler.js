@@ -3,6 +3,28 @@
 // Supports Today, Tomorrow, This Week, and This Month planning horizons.
 // Splits tasks into manageable focus sessions, inserts restorative breaks, respects deadlines, and avoids overlaps.
 
+import {
+  formatLocalDate,
+  toLocalDateString,
+  parseLocalDate,
+  parseReferenceDate,
+  getTodayDateString,
+  getTomorrowDateString,
+  compareCalendarDates,
+  formatDisplayDate,
+} from './dateUtils.js';
+
+export {
+  formatLocalDate,
+  toLocalDateString,
+  parseLocalDate,
+  parseReferenceDate,
+  getTodayDateString,
+  getTomorrowDateString,
+  compareCalendarDates,
+  formatDisplayDate,
+};
+
 const URGENCY_WEIGHTS = {
   critical: 4,
   high: 3,
@@ -30,16 +52,6 @@ export function timeToMinutes(timeStr) {
 }
 
 /**
- * Local-time safe date string YYYY-MM-DD.
- */
-export function toLocalDateString(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-/**
  * Parse a deadline string (ISO timestamp, date string, or HH:mm) into minutes from start of day,
  * or null if no valid deadline is provided.
  */
@@ -51,13 +63,14 @@ export function parseDeadlineToMinutes(deadlineStr, referenceDate = new Date()) 
     return timeToMinutes(deadlineStr.trim());
   }
 
-  const d = new Date(deadlineStr);
-  if (isNaN(d.getTime())) return null;
+  const ref = parseReferenceDate(referenceDate);
+  const d = parseLocalDate(deadlineStr);
+  if (!d || isNaN(d.getTime())) return null;
 
   const startOfRefDay = new Date(
-    referenceDate.getFullYear(),
-    referenceDate.getMonth(),
-    referenceDate.getDate(),
+    ref.getFullYear(),
+    ref.getMonth(),
+    ref.getDate(),
     0, 0, 0, 0
   );
 
@@ -94,8 +107,8 @@ export function evaluateDeadlineForDate(deadlineStr, targetDateStr, dayEndMinute
     };
   }
 
-  const d = new Date(trimmed);
-  if (isNaN(d.getTime())) {
+  const d = parseLocalDate(trimmed);
+  if (!d || isNaN(d.getTime())) {
     return {
       hasDeadline: false,
       isPastBeforeDay: false,
@@ -149,6 +162,7 @@ export function evaluateDeadlineForDate(deadlineStr, targetDateStr, dayEndMinute
  * Sort tasks deterministically by urgency, deadline proximity, and duration.
  */
 export function sortTasksForScheduling(tasks, referenceDate = new Date()) {
+  const ref = parseReferenceDate(referenceDate);
   return [...tasks].sort((a, b) => {
     // 1. Urgency (critical > high > medium > low)
     const urgA = URGENCY_WEIGHTS[a.urgency?.toLowerCase()] || 2;
@@ -156,8 +170,8 @@ export function sortTasksForScheduling(tasks, referenceDate = new Date()) {
     if (urgB !== urgA) return urgB - urgA;
 
     // 2. Deadline proximity (earlier deadline first)
-    const deadA = parseDeadlineToMinutes(a.deadline, referenceDate);
-    const deadB = parseDeadlineToMinutes(b.deadline, referenceDate);
+    const deadA = parseDeadlineToMinutes(a.deadline, ref);
+    const deadB = parseDeadlineToMinutes(b.deadline, ref);
 
     if (deadA !== null && deadB !== null) {
       if (deadA !== deadB) return deadA - deadB;
@@ -354,7 +368,7 @@ export function validateRoutineSettings(settings) {
  * @returns {Object} Complete schedule result with timeline items, metrics, and overflow report
  */
 export function createDailySchedule(tasks = [], options = {}) {
-  const referenceDate = options.currentDate ? new Date(options.currentDate) : new Date();
+  const referenceDate = parseReferenceDate(options.currentDate);
 
   const todayStr = toLocalDateString(referenceDate);
   const horizon = options.horizon || 'today';
@@ -895,7 +909,7 @@ export function createDailySchedule(tasks = [], options = {}) {
     }
 
     // Step A: Schedule tasks pinned to this date
-    const pinnedDayTasks = sortTasksForScheduling(pinnedByDay[dayStr] || [], new Date(dayStr + 'T00:00:00'));
+    const pinnedDayTasks = sortTasksForScheduling(pinnedByDay[dayStr] || [], parseLocalDate(dayStr));
     for (const task of pinnedDayTasks) {
       const res = tryScheduleTaskOnDay(task, true);
       if (!res.success) {

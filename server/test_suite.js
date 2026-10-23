@@ -8,7 +8,20 @@ import {
   DEFAULT_ROUTINE_BLOCKS,
   DEFAULT_ROUTINE_SETTINGS,
   validateRoutineSettings,
+  evaluateDeadlineForDate,
+  parseDeadlineToMinutes,
 } from './scheduler.js';
+import {
+  formatLocalDate,
+  toLocalDateString,
+  parseLocalDate,
+  parseReferenceDate,
+  getTodayDateString,
+  getTomorrowDateString,
+  compareCalendarDates,
+  formatDisplayDate,
+} from './dateUtils.js';
+import { parseExplicitDuration } from './durationParser.js';
 
 async function runTests() {
   console.log('🧪 Starting SlothMode Test Suite...\n');
@@ -769,9 +782,293 @@ async function runTests() {
   }
   assert(!outsideBoundaries, 'Zero sessions or breaks scheduled outside configured 09:00–20:00 window');
 
+  // ==========================================
+  // 24. Local Date and Time Synchronization
+  // ==========================================
+  console.log('\n--- 24. Testing Local Date and Time Synchronization ---');
+
+  // 24a. Task dated Oct 23 displays as "Today" and Oct 24 as "Tomorrow" when ref is Oct 23
+  const refOct23 = parseLocalDate('2026-10-23');
+  assert(formatDisplayDate('2026-10-23', refOct23) === 'Today', 'Task dated October 23 displays as Today when local date is Oct 23');
+  assert(formatDisplayDate('2026-10-24', refOct23) === 'Tomorrow', 'Task dated October 24 displays as Tomorrow when local date is Oct 23');
+  assert(formatDisplayDate('2026-10-25', refOct23) === 'Oct 25', 'Task dated October 25 displays as Oct 25 when local date is Oct 23');
+  assert(formatDisplayDate('2026-10-22', refOct23) === 'Oct 22', 'Task dated October 22 displays as Oct 22 when local date is Oct 23');
+
+  // 24b. Date-only string parsing without UTC shift
+  const parsedOct23 = parseLocalDate('2026-10-23');
+  assert(parsedOct23.getFullYear() === 2026, 'Parsed year is 2026');
+  assert(parsedOct23.getMonth() === 9, 'Parsed month is 9 (October)');
+  assert(parsedOct23.getDate() === 23, 'Parsed date is 23 (zero UTC-shift)');
+  assert(formatLocalDate(parsedOct23) === '2026-10-23', 'Formatted local date string matches 2026-10-23');
+  assert(toLocalDateString(parsedOct23) === '2026-10-23', 'toLocalDateString matches 2026-10-23');
+  assert(parseReferenceDate('2026-10-23').getDate() === 23, 'parseReferenceDate resolves to 23rd in all timezones');
+
+  // 24c. Near-midnight boundaries and day-crossing transitions
+  const lateNightOct23 = new Date(2026, 9, 23, 23, 59, 59, 999);
+  assert(getTodayDateString(lateNightOct23) === '2026-10-23', '23:59:59 resolves to Today 2026-10-23');
+  assert(getTomorrowDateString(lateNightOct23) === '2026-10-24', '23:59:59 resolves to Tomorrow 2026-10-24');
+  assert(formatDisplayDate('2026-10-23', lateNightOct23) === 'Today', 'Late night 23:59:59 displays Oct 23 as Today');
+  assert(formatDisplayDate('2026-10-24', lateNightOct23) === 'Tomorrow', 'Late night 23:59:59 displays Oct 24 as Tomorrow');
+
+  const earlyMorningOct24 = new Date(2026, 9, 24, 0, 0, 1, 0);
+  assert(getTodayDateString(earlyMorningOct24) === '2026-10-24', '00:00:01 resolves to Today 2026-10-24');
+  assert(getTomorrowDateString(earlyMorningOct24) === '2026-10-25', '00:00:01 resolves to Tomorrow 2026-10-25');
+  assert(formatDisplayDate('2026-10-24', earlyMorningOct24) === 'Today', 'Early morning 00:00:01 displays Oct 24 as Today');
+  assert(formatDisplayDate('2026-10-23', earlyMorningOct24) === 'Oct 23', 'Early morning 00:00:01 displays Oct 23 as past date Oct 23');
+
+  // 24d. Month-end and year-end transitions
+  const monthEndOct31 = new Date(2026, 9, 31, 15, 0, 0);
+  assert(getTodayDateString(monthEndOct31) === '2026-10-31', 'Month end date is 2026-10-31');
+  assert(getTomorrowDateString(monthEndOct31) === '2026-11-01', 'Tomorrow at month end crosses into next month 2026-11-01');
+  assert(formatDisplayDate('2026-10-31', monthEndOct31) === 'Today', 'Oct 31 displays as Today on Oct 31');
+  assert(formatDisplayDate('2026-11-01', monthEndOct31) === 'Tomorrow', 'Nov 01 displays as Tomorrow on Oct 31');
+
+  const yearEndDec31 = new Date(2026, 11, 31, 22, 0, 0);
+  assert(getTodayDateString(yearEndDec31) === '2026-12-31', 'Year end date is 2026-12-31');
+  assert(getTomorrowDateString(yearEndDec31) === '2027-01-01', 'Tomorrow at year end crosses into next year 2027-01-01');
+  assert(formatDisplayDate('2026-12-31', yearEndDec31) === 'Today', 'Dec 31 displays as Today on Dec 31');
+  assert(formatDisplayDate('2027-01-01', yearEndDec31) === 'Tomorrow', 'Jan 01 displays as Tomorrow on Dec 31');
+
+  const leapFeb28 = new Date(2028, 1, 28, 10, 0, 0);
+  assert(getTomorrowDateString(leapFeb28) === '2028-02-29', 'Leap year Feb 28 rolls over to Feb 29');
+
+  // 24e. Calendar date comparisons
+  assert(compareCalendarDates('2026-10-23', '2026-10-23') === 0, 'Comparing same date returns 0');
+  assert(compareCalendarDates('2026-10-23', '2026-10-24') < 0, 'Comparing earlier to later returns negative');
+  assert(compareCalendarDates('2026-10-24', '2026-10-23') > 0, 'Comparing later to earlier returns positive');
+  assert(compareCalendarDates('2026-10-31', '2026-11-01') < 0, 'Month boundary comparison is correct');
+  assert(compareCalendarDates('2026-12-31', '2027-01-01') < 0, 'Year boundary comparison is correct');
+
+  // 24f. Frontend-to-backend schedule date integrity in createDailySchedule
+  const syncTasks = [
+    { id: 1501, title: 'Pinned Oct 23 task', scheduledDate: '2026-10-23', duration: 45, done: false },
+    { id: 1502, title: 'Pinned Oct 24 task', scheduledDate: '2026-10-24', duration: 45, done: false },
+  ];
+
+  // Horizon: today with explicit currentDate: "2026-10-23"
+  const planToday = createDailySchedule(syncTasks, {
+    currentDate: '2026-10-23',
+    horizon: 'today',
+    routineSettings: DEFAULT_ROUTINE_SETTINGS,
+  });
+  assert(planToday.startDate === '2026-10-23', 'Today plan starts on local 2026-10-23');
+  const task1501Session = planToday.schedule.find((s) => s.taskId === 1501);
+  assert(task1501Session !== undefined, 'Task 1501 scheduled today');
+  assert(task1501Session?.date === '2026-10-23', 'Task 1501 scheduled on 2026-10-23 (not shifted to tomorrow)');
+  const enriched1501 = planToday.enrichedTasks.find((t) => t.id === 1501);
+  assert(enriched1501?.scheduledDate === '2026-10-23', 'Task 1501 preserves scheduledDate 2026-10-23 in enrichedTasks');
+  const task1502InToday = planToday.schedule.find((s) => s.taskId === 1502);
+  assert(task1502InToday === undefined, 'Oct 24 task is not scheduled into today active timeline');
+
+  // Horizon: tomorrow with explicit currentDate: "2026-10-23"
+  const planTomorrow = createDailySchedule(syncTasks, {
+    currentDate: '2026-10-23',
+    horizon: 'tomorrow',
+    routineSettings: DEFAULT_ROUTINE_SETTINGS,
+  });
+  assert(planTomorrow.startDate === '2026-10-24', 'Tomorrow plan starts on 2026-10-24');
+  const task1502Tomorrow = planTomorrow.schedule.find((s) => s.taskId === 1502);
+  assert(task1502Tomorrow !== undefined, 'Oct 24 task scheduled in tomorrow plan');
+  assert(task1502Tomorrow?.date === '2026-10-24', 'Oct 24 task placed on 2026-10-24');
+
+  // Horizon: week with explicit currentDate: "2026-10-23" (Friday)
+  const planWeek = createDailySchedule(syncTasks, {
+    currentDate: '2026-10-23',
+    horizon: 'week',
+    routineSettings: DEFAULT_ROUTINE_SETTINGS,
+  });
+  assert(planWeek.startDate === '2026-10-19', 'Week plan starts on Monday 2026-10-19');
+  assert(planWeek.endDate === '2026-10-25', 'Week plan ends on Sunday 2026-10-25');
+  const week1501 = planWeek.schedule.find((s) => s.taskId === 1501);
+  const week1502 = planWeek.schedule.find((s) => s.taskId === 1502);
+  assert(week1501?.date === '2026-10-23', 'Task 1501 placed on Friday Oct 23 in week view');
+  assert(week1502?.date === '2026-10-24', 'Task 1502 placed on Saturday Oct 24 in week view');
+
+  // 24g. Deadline evaluation without UTC shifts
+  const evalSameDay = evaluateDeadlineForDate('2026-10-23', '2026-10-23');
+  assert(evalSameDay.hasDeadline === true, 'Deadline evaluated for same day has deadline');
+  assert(evalSameDay.isDeadlineOnDate === true, 'Deadline on 2026-10-23 recognized on 2026-10-23');
+  assert(evalSameDay.isPastBeforeDay === false, 'Same day deadline is not past before day');
+
+  const evalPastDay = evaluateDeadlineForDate('2026-10-23', '2026-10-24');
+  assert(evalPastDay.isPastBeforeDay === true, 'Oct 23 deadline on Oct 24 recognized as past before day');
+
+  const parsedDeadlineMins = parseDeadlineToMinutes('2026-10-23 15:30', '2026-10-23');
+  assert(parsedDeadlineMins === 15 * 60 + 30, 'parseDeadlineToMinutes handles local time string correctly (930m)');
+
+  // ==========================================
+  // 25. Deterministic Explicit Duration Parsing
+  // ==========================================
+  console.log('\n--- 25. Testing Deterministic Explicit Duration Parsing ---');
+
+  // Exact required examples
+  assert(parseExplicitDuration('study for 2 hours')?.durationMinutes === 120, '"study for 2 hours" -> 120 minutes');
+  assert(parseExplicitDuration('read 30 minutes')?.durationMinutes === 30, '"read 30 minutes" -> 30 minutes');
+  assert(parseExplicitDuration('work for 1.5 hours')?.durationMinutes === 90, '"work for 1.5 hours" -> 90 minutes');
+  assert(parseExplicitDuration('practice for 2 hrs 30 mins')?.durationMinutes === 150, '"practice for 2 hrs 30 mins" -> 150 minutes');
+  assert(parseExplicitDuration('study 45m')?.durationMinutes === 45, '"study 45m" -> 45 minutes');
+  assert(parseExplicitDuration('study for 90 minutes')?.durationMinutes === 90, '"study for 90 minutes" -> 90 minutes');
+
+  // Negative tests: numbers that must NOT become durations
+  assert(parseExplicitDuration('read chapter 2') === null, '"read chapter 2" is not a duration (returns null)');
+  assert(parseExplicitDuration('finish 3 exercises') === null, '"finish 3 exercises" is not a duration (returns null)');
+  assert(parseExplicitDuration('review 5 pages') === null, '"review 5 pages" is not a duration (returns null)');
+  assert(parseExplicitDuration('watch episode 4') === null, '"watch episode 4" is not a duration (returns null)');
+  assert(parseExplicitDuration('meeting at 2pm') === null, '"meeting at 2pm" is not a duration (returns null)');
+  assert(parseExplicitDuration('run 500m') === null, '"run 500m" is not a duration (returns null)');
+
+  // Mixed expressions where duration is present alongside unrelated numbers
+  assert(parseExplicitDuration('read chapter 2 for 30 minutes')?.durationMinutes === 30, '"read chapter 2 for 30 minutes" extracts 30 minutes');
+  assert(parseExplicitDuration('finish 3 exercises in 45m')?.durationMinutes === 45, '"finish 3 exercises in 45m" extracts 45 minutes');
+  assert(parseExplicitDuration('chapter 2 in 1.5 hours')?.durationMinutes === 90, '"chapter 2 in 1.5 hours" extracts 90 minutes');
+
+  // Metadata check
+  const metaCheck = parseExplicitDuration('study for 2 hours');
+  assert(metaCheck?.source === 'explicit', 'Metadata durationSource is "explicit"');
+  assert(metaCheck?.confidence === 'high', 'Metadata confidence is "high"');
+
+  // ==========================================
+  // 26. Priority Hierarchy: Explicit > AI & Manual > AI
+  // ==========================================
+  console.log('\n--- 26. Testing Priority Hierarchy & Scheduling Integration ---');
+
+  // 26a. Explicit duration takes priority over Ollama and skips Ollama call
+  let mockOllamaCalled = false;
+  const mockFetchForExplicit = async () => {
+    mockOllamaCalled = true;
+    return {
+      ok: true,
+      json: async () => ({
+        message: { content: JSON.stringify({ category: 'college', estimatedMinutes: 480 }) },
+      }),
+    };
+  };
+
+  const explicitClassified = await classifyTask('Study for 2 hours', null, {
+    fetchFn: mockFetchForExplicit,
+  });
+  assert(mockOllamaCalled === false, 'Ollama was NOT called when explicit duration was detected');
+  assert(explicitClassified.estimatedMinutes === 120, 'Explicit duration (120m) returned instead of 480m guess');
+  assert(explicitClassified.durationSource === 'explicit', 'durationSource marked as "explicit"');
+  assert(explicitClassified.aiGenerated === false, 'aiGenerated is false for explicit duration');
+
+  // 26b. Manual duration takes priority over AI and parser output when overridden
+  const manualOverrideTask = {
+    id: 1601,
+    title: 'Study for 2 hours', // title says 2 hours (120m)
+    duration: 75,               // but user manually entered 75m
+    durationSource: 'manual',
+    done: false,
+    scheduledDate: '2026-10-23',
+  };
+  const manualOverridePlan = createDailySchedule([manualOverrideTask], {
+    currentDate: '2026-10-23',
+    routineSettings: DEFAULT_ROUTINE_SETTINGS,
+  });
+  const enrichedManual = manualOverridePlan.enrichedTasks.find((t) => t.id === 1601);
+  assert(enrichedManual?.duration === 75, 'User manual 75m duration strictly preserved over title 2 hours');
+  assert(enrichedManual?.durationSource === 'manual', 'durationSource remains "manual"');
+
+  // 26c. Explicit duration flows into scheduler and focus-session splitting
+  const explicitTask = {
+    id: 1602,
+    title: 'Study for 2 hours',
+    duration: 120,
+    durationSource: 'explicit',
+    done: false,
+    scheduledDate: '2026-10-23',
+  };
+  const explicitPlan = createDailySchedule([explicitTask], {
+    currentDate: '2026-10-23',
+    routineSettings: DEFAULT_ROUTINE_SETTINGS,
+  });
+  const explicitSessions = explicitPlan.schedule.filter((s) => s.taskId === 1602);
+  const totalExplicitScheduledMins = explicitSessions.reduce((acc, curr) => acc + curr.durationMinutes, 0);
+  assert(totalExplicitScheduledMins === 120, `Explicit 120m scheduled exactly as 120m (actual: ${totalExplicitScheduledMins}m, not inflated to 480m)`);
+
+  // ==========================================
+  // 27. Defensive Ollama Integration & Mocked Responses
+  // ==========================================
+  console.log('\n--- 27. Testing Defensive Ollama Integration with Mocked Responses ---');
+
+  // 27a. Valid Ollama output accepted
+  const mockValidFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      message: {
+        content: JSON.stringify({
+          category: 'college',
+          estimatedMinutes: 55,
+          urgency: 'high',
+          confidence: 'high',
+          reasoning: 'Realistic estimate for chemistry lab prep',
+          suggestedSubtasks: ['Review safety protocols', 'Outline experimental procedure'],
+        }),
+      },
+    }),
+  });
+  const validResult = await classifyTask('Prepare chemistry lab report', null, {
+    fetchFn: mockValidFetch,
+  });
+  assert(validResult.aiGenerated === true, 'Valid Ollama response marked as aiGenerated: true');
+  assert(validResult.estimatedMinutes === 55, 'Valid 55m estimate accepted');
+  assert(validResult.category === 'college', 'Category college parsed correctly');
+
+  // 27b. Malformed non-JSON Ollama output triggers safe fallback
+  const mockMalformedFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      message: {
+        content: 'This is not JSON at all! I think you should spend some time on this.',
+      },
+    }),
+  });
+  const malformedResult = await classifyTask('Prepare chemistry lab report', null, {
+    fetchFn: mockMalformedFetch,
+  });
+  assert(malformedResult.aiGenerated === false, 'Malformed output rejected, aiGenerated: false');
+  assert(typeof malformedResult.estimatedMinutes === 'number', 'Fallback provided numeric estimatedMinutes');
+  assert(malformedResult.confidence === 'low', 'Confidence marked as low on fallback');
+
+  // 27c. Non-numeric or NaN duration output triggers safe fallback
+  const mockNanFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      message: {
+        content: JSON.stringify({
+          category: 'college',
+          estimatedMinutes: 'unknown_duration',
+        }),
+      },
+    }),
+  });
+  const nanResult = await classifyTask('Prepare chemistry lab report', null, {
+    fetchFn: mockNanFetch,
+  });
+  assert(nanResult.aiGenerated === false, 'Non-numeric duration rejected, aiGenerated: false');
+  assert(nanResult.estimatedMinutes > 0, 'Safe fallback duration provided');
+
+  // 27d. Unreasonable duration (> 480m / 8 hours) triggers safe fallback
+  const mockUnreasonableFetch = async () => ({
+    ok: true,
+    json: async () => ({
+      message: {
+        content: JSON.stringify({
+          category: 'college',
+          estimatedMinutes: 9999,
+        }),
+      },
+    }),
+  });
+  const unreasonableResult = await classifyTask('Clean my desk', null, {
+    fetchFn: mockUnreasonableFetch,
+  });
+  assert(unreasonableResult.aiGenerated === false, 'Unreasonable 9999m estimate rejected');
+  assert(unreasonableResult.estimatedMinutes <= 480, 'Fallback duration kept within safe student bounds');
+
   console.log(`\n================================`);
   if (failures === 0) {
-    console.log('🎉 ALL 23 TEST SUITES PASSED FLAWLESSLY!');
+    console.log('🎉 ALL 27 TEST SUITES PASSED FLAWLESSLY!');
   } else {
     console.error(`💥 ${failures} TEST(S) FAILED.`);
     process.exit(1);

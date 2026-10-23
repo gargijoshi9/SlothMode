@@ -1,5 +1,6 @@
-// server/ollama.js
-// Handles communication with local Ollama Gemma 3 1B model, with deterministic rule-based fallback.
+import { parseExplicitDuration } from './durationParser.js';
+
+export { parseExplicitDuration };
 
 const VALID_CATEGORIES = ['college', 'exam_prep', 'chore', 'health', 'personal', 'work'];
 const VALID_URGENCIES = ['critical', 'high', 'medium', 'low'];
@@ -233,12 +234,18 @@ function extractJson(text) {
 function sanitizeClassification(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
 
+  // Reject missing, non-numeric, non-finite, negative, or unreasonable duration (> 480 minutes / 8 hours)
+  if (parsed.estimatedMinutes === undefined || parsed.estimatedMinutes === null || parsed.estimatedMinutes === '') {
+    return null;
+  }
+  const rawMin = Number(parsed.estimatedMinutes);
+  if (!Number.isFinite(rawMin) || isNaN(rawMin) || rawMin <= 0 || rawMin > 480) {
+    return null;
+  }
+  const estimatedMinutes = Math.round(rawMin);
+
   const rawCat = String(parsed.category || '').toLowerCase().replace(/[\s-]/g, '_');
   const category = VALID_CATEGORIES.includes(rawCat) ? rawCat : 'personal';
-
-  let rawMin = Number(parsed.estimatedMinutes);
-  if (isNaN(rawMin) || rawMin <= 0) rawMin = 30;
-  const estimatedMinutes = Math.min(480, Math.max(5, Math.round(rawMin)));
 
   const rawUrg = String(parsed.urgency || '').toLowerCase();
   const urgency = VALID_URGENCIES.includes(rawUrg) ? rawUrg : 'medium';
@@ -298,6 +305,26 @@ export async function classifyTask(taskTitle, deadline = null, options = {}) {
 
   const cleanTitle = taskTitle.trim();
 
+  // Rule 1 & 2: Explicit duration in title or description has priority over an AI estimate.
+  // When an explicit duration is detected, do not call Ollama.
+  const explicit = parseExplicitDuration(cleanTitle) || (description ? parseExplicitDuration(description) : null);
+  if (explicit && !options.forceAi) {
+    const fallbackInfo = ruleBasedFallback(cleanTitle, deadline, explicit.reasoning);
+    return {
+      aiGenerated: false,
+      fallbackReason: explicit.reasoning,
+      category: fallbackInfo.category,
+      estimatedMinutes: explicit.durationMinutes,
+      durationSource: 'explicit',
+      urgency: fallbackInfo.urgency,
+      suggestedSubtasks: fallbackInfo.suggestedSubtasks,
+      dependencyNote: fallbackInfo.dependencyNote,
+      schedulingTip: `Paced for your explicit ${explicit.durationMinutes}m session.`,
+      confidence: 'high',
+      reasoning: explicit.reasoning,
+    };
+  }
+
   const systemPrompt = `You are SlothMode's calm, intelligent productivity assistant for students.
 Classify the task provided as JSON data and return actionable subtasks and realistic dynamic time estimates.
 You MUST output valid, pure JSON with no markdown formatting or commentary.
@@ -330,12 +357,13 @@ Guidance:
   });
 
   const chatUrl = `${baseUrl.replace(/\/$/, '')}/api/chat`;
+  const fetchImpl = options.fetchFn || fetch;
 
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    const res = await fetch(chatUrl, {
+    const res = await fetchImpl(chatUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

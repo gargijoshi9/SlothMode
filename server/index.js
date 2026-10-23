@@ -4,7 +4,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { checkOllamaHealth, classifyTask, estimateTaskDuration } from './ollama.js';
+import { checkOllamaHealth, classifyTask, estimateTaskDuration, ruleBasedFallback } from './ollama.js';
+import { parseExplicitDuration } from './durationParser.js';
 import { createDailySchedule } from './scheduler.js';
 
 // Load environment variables
@@ -49,6 +50,27 @@ app.post('/api/estimate', async (req, res) => {
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({
         error: 'Task title is required.',
+      });
+    }
+
+    // Explicit duration takes priority over Ollama estimation
+    const explicit = parseExplicitDuration(title) || (description ? parseExplicitDuration(description) : null);
+    if (explicit && !forceAi) {
+      console.log(`[API /estimate] Detected explicit duration: ${explicit.durationMinutes}m for "${title}"`);
+      const fallback = ruleBasedFallback(title, deadline);
+      return res.json({
+        title: title.trim(),
+        category: fallback.category,
+        estimatedMinutes: explicit.durationMinutes,
+        duration: explicit.durationMinutes,
+        durationSource: 'explicit',
+        confidence: 'high',
+        urgency: fallback.urgency,
+        suggestedSubtasks: fallback.suggestedSubtasks,
+        dependencyNote: fallback.dependencyNote,
+        schedulingTip: `Paced for your explicit ${explicit.durationMinutes}m session.`,
+        reasoning: explicit.reasoning,
+        aiGenerated: false,
       });
     }
 
@@ -156,34 +178,59 @@ app.post('/api/plan', async (req, res) => {
           }));
 
           const isManualDuration = task.durationSource === 'manual';
-          const finalDuration = isManualDuration
-            ? task.duration
-            : (task.durationSource === 'provisional'
-                ? classified.estimatedMinutes
-                : (task.duration || classified.estimatedMinutes));
-          const finalDurationSource = isManualDuration
-            ? 'manual'
-            : (classified.aiGenerated ? 'ai_estimated' : 'fallback_estimated');
+          const explicit = parseExplicitDuration(task.title) || (task.description ? parseExplicitDuration(task.description) : null);
+          const isExplicitDuration = task.durationSource === 'explicit' || Boolean(explicit);
+
+          let finalDuration;
+          let finalDurationSource;
+          if (isManualDuration) {
+            finalDuration = task.duration;
+            finalDurationSource = 'manual';
+          } else if (isExplicitDuration) {
+            finalDuration = task.durationSource === 'explicit' && task.duration ? task.duration : explicit.durationMinutes;
+            finalDurationSource = 'explicit';
+          } else if (task.durationSource === 'provisional') {
+            finalDuration = classified.estimatedMinutes;
+            finalDurationSource = classified.aiGenerated ? 'ai_estimated' : 'fallback_estimated';
+          } else {
+            finalDuration = task.duration || classified.estimatedMinutes;
+            finalDurationSource = classified.aiGenerated ? 'ai_estimated' : 'fallback_estimated';
+          }
 
           return {
             ...task,
             category: classified.category,
             duration: finalDuration,
             durationSource: finalDurationSource,
-            durationConfidence: classified.confidence || task.durationConfidence,
-            estimationReasoning: classified.reasoning || task.estimationReasoning,
+            durationConfidence: isExplicitDuration ? 'high' : (classified.confidence || task.durationConfidence),
+            estimationReasoning: isExplicitDuration ? (explicit ? explicit.reasoning : task.estimationReasoning) : (classified.reasoning || task.estimationReasoning),
             urgency: classified.urgency,
             subtasks: subtaskObjs,
             dependencyNote: classified.dependencyNote,
             schedulingTip: classified.schedulingTip,
-            aiGenerated: classified.aiGenerated,
-            fallbackReason: classified.fallbackReason,
+            aiGenerated: isExplicitDuration ? false : classified.aiGenerated,
+            fallbackReason: isExplicitDuration ? undefined : classified.fallbackReason,
           };
+        }
+
+        const isManual = task.durationSource === 'manual';
+        const explicit = parseExplicitDuration(task.title) || (task.description ? parseExplicitDuration(task.description) : null);
+        let finalDur = task.duration;
+        let finalSrc = task.durationSource;
+        if (!isManual) {
+          if (finalSrc === 'explicit' || explicit) {
+            finalSrc = 'explicit';
+            finalDur = finalSrc === 'explicit' && task.duration ? task.duration : explicit.durationMinutes;
+          } else if (!finalDur) {
+            finalSrc = 'provisional';
+            finalDur = 30;
+          }
         }
 
         return {
           ...task,
-          durationSource: task.durationSource || (task.duration ? 'manual' : 'provisional'),
+          duration: finalDur,
+          durationSource: finalSrc || (finalDur ? 'manual' : 'provisional'),
         };
       })
     );

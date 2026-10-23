@@ -2440,6 +2440,12 @@ button.nav-item {
   border: 1px solid #fed7aa;
 }
 
+.duration-source-badge.explicit {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
 .reestimate-chip {
   display: inline-flex;
   align-items: center;
