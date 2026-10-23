@@ -4,7 +4,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { checkOllamaHealth, classifyTask } from './ollama.js';
+import { checkOllamaHealth, classifyTask, estimateTaskDuration } from './ollama.js';
 import { createDailySchedule } from './scheduler.js';
 
 // Load environment variables
@@ -35,6 +35,48 @@ app.get('/api/health', async (_req, res) => {
       ...ollamaStatus,
     },
   });
+});
+
+/**
+ * POST /api/estimate
+ * Dynamically estimates task duration using local Gemma 3 1B with deterministic fallback.
+ * Body: { title: string, description?: string, context?: string, deadline?: string, forceAi?: boolean }
+ */
+app.post('/api/estimate', async (req, res) => {
+  try {
+    const { title, description, context, deadline, forceAi } = req.body || {};
+
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({
+        error: 'Task title is required.',
+      });
+    }
+
+    const estimate = await estimateTaskDuration(
+      {
+        title: title.trim(),
+        description: description || '',
+        context: context || '',
+        deadline: deadline || null,
+      },
+      {
+        baseUrl: OLLAMA_BASE_URL,
+        modelName: OLLAMA_MODEL,
+        forceAi: Boolean(forceAi),
+      }
+    );
+
+    return res.json({
+      title: title.trim(),
+      ...estimate,
+    });
+  } catch (err) {
+    console.error('Estimation error:', err);
+    return res.status(500).json({
+      error: 'Failed to estimate task duration',
+      message: err.message,
+    });
+  }
 });
 
 /**
@@ -93,7 +135,7 @@ app.post('/api/plan', async (req, res) => {
     // Process tasks: for tasks lacking subtasks or category, run classification
     const enrichedTasks = await Promise.all(
       tasks.map(async (task) => {
-        // If task already has subtasks and category and duration, keep it unless forced
+        // If task already has subtasks and category, keep it unless forced
         const needsClassification =
           !task.category ||
           !task.subtasks ||
@@ -113,10 +155,23 @@ app.post('/api/plan', async (req, res) => {
             done: false,
           }));
 
+          const isManualDuration = task.durationSource === 'manual';
+          const finalDuration = isManualDuration
+            ? task.duration
+            : (task.durationSource === 'provisional'
+                ? classified.estimatedMinutes
+                : (task.duration || classified.estimatedMinutes));
+          const finalDurationSource = isManualDuration
+            ? 'manual'
+            : (classified.aiGenerated ? 'ai_estimated' : 'fallback_estimated');
+
           return {
             ...task,
             category: classified.category,
-            duration: classified.estimatedMinutes,
+            duration: finalDuration,
+            durationSource: finalDurationSource,
+            durationConfidence: classified.confidence || task.durationConfidence,
+            estimationReasoning: classified.reasoning || task.estimationReasoning,
             urgency: classified.urgency,
             subtasks: subtaskObjs,
             dependencyNote: classified.dependencyNote,
@@ -126,7 +181,10 @@ app.post('/api/plan', async (req, res) => {
           };
         }
 
-        return task;
+        return {
+          ...task,
+          durationSource: task.durationSource || (task.duration ? 'manual' : 'provisional'),
+        };
       })
     );
 

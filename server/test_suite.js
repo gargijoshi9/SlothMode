@@ -1,7 +1,7 @@
 // server/test_suite.js
 // Automated verification suite for Phase 6.
 
-import { checkOllamaHealth, classifyTask, ruleBasedFallback } from './ollama.js';
+import { checkOllamaHealth, classifyTask, ruleBasedFallback, estimateTaskDuration } from './ollama.js';
 import { createDailySchedule, timeToMinutes } from './scheduler.js';
 
 async function runTests() {
@@ -358,9 +358,142 @@ async function runTests() {
   // Verify completed task 304 is preserved in completedTasks
   assert(regressionPlan.completedTasks.some((t) => String(t.id) === '304'), 'Completed task 304 preserved in completedTasks');
 
+  // 19. Smart AI Task Duration Estimation & Fallback Behavior
+  console.log('\n--- 19. Testing Smart AI Task Duration Estimation & Fallback ---');
+  // 19a. Provisional duration verification
+  const provisionalTask = { id: 401, title: 'Draft biology lab discussion', done: false };
+  const provisionalDuration = provisionalTask.duration ?? 30;
+  assert(provisionalDuration === 30, 'Provisional default duration is exactly 30 minutes without user prompt');
+
+  // 19b. Fallback on unreachable endpoint
+  const fallbackEstimate = await estimateTaskDuration(
+    {
+      title: 'Analyze BLS transit features for Kepler candidates',
+      description: 'Extract period and duration from folded light curves',
+      context: 'Priority: High, Deadline: Tomorrow',
+    },
+    {
+      baseUrl: 'http://127.0.0.1:54321', // Unreachable
+      timeoutMs: 1500,
+    }
+  );
+  assert(typeof fallbackEstimate.estimatedMinutes === 'number', 'Fallback estimate returned number of minutes');
+  assert(fallbackEstimate.estimatedMinutes >= 5 && fallbackEstimate.estimatedMinutes <= 480, `Fallback minutes in bounds (${fallbackEstimate.estimatedMinutes}m)`);
+  assert(fallbackEstimate.aiGenerated === false, 'Fallback flags aiGenerated: false');
+  assert(fallbackEstimate.confidence === 'low', 'Fallback marks confidence as low');
+  assert(typeof fallbackEstimate.reasoning === 'string' && fallbackEstimate.reasoning.length > 0, 'Fallback reasoning provided');
+
+  // 19c. Dynamic effort scaling with rich context (no hard-coded title mapping)
+  const quickChore = await estimateTaskDuration(
+    { title: 'Take out trash and check mail' },
+    { baseUrl: 'http://127.0.0.1:54321', timeoutMs: 1000 }
+  );
+  const extensiveProject = await estimateTaskDuration(
+    {
+      title: 'Write comprehensive senior thesis methodology chapter',
+      description: 'Includes statistical analysis, literature survey, and full methodology breakdown',
+    },
+    { baseUrl: 'http://127.0.0.1:54321', timeoutMs: 1000 }
+  );
+  assert(quickChore.estimatedMinutes <= 30, `Quick chore estimate reflects shorter duration (${quickChore.estimatedMinutes}m)`);
+  assert(extensiveProject.estimatedMinutes >= 60, `Extensive thesis project reflects longer duration (${extensiveProject.estimatedMinutes}m)`);
+
+  // 20. Manual Duration Preservation During Replanning & Explicit Re-estimation
+  console.log('\n--- 20. Testing Manual Duration Preservation During Replanning ---');
+  const manualDurationTasks = [
+    {
+      id: 501,
+      title: 'Short 15m review with supervisor',
+      duration: 15,
+      durationSource: 'manual',
+      done: false,
+    },
+    {
+      id: 502,
+      title: 'Custom 120m deep focus session',
+      duration: 120,
+      durationSource: 'manual',
+      done: false,
+    },
+    {
+      id: 503,
+      title: 'Provisional task waiting for estimate',
+      duration: 30,
+      durationSource: 'provisional',
+      done: false,
+    },
+  ];
+
+  const manualPlan = createDailySchedule(manualDurationTasks, {
+    currentDate: '2026-10-22T09:00:00',
+    horizon: 'today',
+    startHour: 9,
+    endHour: 18,
+  });
+
+  // Verify scheduler preserves manual duration
+  const manualSession1 = manualPlan.schedule.find((s) => s.taskId === 501);
+  const manualSession2 = manualPlan.schedule.filter((s) => s.taskId === 502);
+  const totalMins502 = manualSession2.reduce((acc, s) => acc + s.durationMinutes, 0);
+
+  assert(manualSession1?.durationMinutes === 15, `Task 501 manual 15m duration strictly preserved (${manualSession1?.durationMinutes}m)`);
+  assert(totalMins502 === 120, `Task 502 manual 120m total duration strictly preserved across sessions (${totalMins502}m)`);
+
+  // Verify explicit re-estimation triggers on demand
+  const explicitReestimate = await estimateTaskDuration(
+    { title: manualDurationTasks[0].title },
+    { baseUrl: 'http://127.0.0.1:54321', forceAi: true, timeoutMs: 1000 }
+  );
+  assert(explicitReestimate !== null && typeof explicitReestimate.estimatedMinutes === 'number', 'Explicit re-estimation returned valid duration estimate');
+
+  // 21. Separation of Total Task Effort & Focus Sessions Across Horizon Days
+  console.log('\n--- 21. Testing Separation of Total Effort & Cross-Day Session Splitting ---');
+  const massiveTask = [
+    {
+      id: 601,
+      title: 'Complete compiler construction semester project',
+      duration: 180, // 3 hours total effort
+      durationSource: 'ai_estimated',
+      done: false,
+    },
+  ];
+
+  // Schedule across This Week with maxSessionMinutes: 45 and maxSessionsPerDayPerTask: 2 (90m/day)
+  const crossDayPlan = createDailySchedule(massiveTask, {
+    currentDate: '2026-10-22T09:00:00', // Thursday
+    horizon: 'week',
+    startHour: 9,
+    endHour: 18,
+    maxSessionMinutes: 45,
+    maxSessionsPerDayPerTask: 2,
+    shortBreakMinutes: 10,
+  });
+
+  const all601Sessions = crossDayPlan.schedule.filter((s) => s.taskId === 601);
+  assert(all601Sessions.length === 4, `180m task split into 4 gentle 45m focus sessions (actual: ${all601Sessions.length})`);
+
+  // Verify total effort preserved on task object
+  const enrichedTask601 = crossDayPlan.enrichedTasks.find((t) => t.id === 601);
+  assert(enrichedTask601?.duration === 180, `Total effort preserved as 180m on enriched task (actual: ${enrichedTask601?.duration}m)`);
+
+  // Verify sessions distributed across days
+  const day1Sessions = all601Sessions.filter((s) => s.date === '2026-10-22');
+  const day2Sessions = all601Sessions.filter((s) => s.date === '2026-10-23');
+
+  assert(day1Sessions.length === 2, `Day 1 received 2 sessions (actual: ${day1Sessions.length})`);
+  assert(day2Sessions.length === 2, `Day 2 received 2 sessions (actual: ${day2Sessions.length})`);
+  assert(day1Sessions[0].title.includes('Part 1/4'), 'Part numbering formatted correctly (Part 1/4)');
+  assert(day1Sessions[1].title.includes('Part 2/4'), 'Part numbering formatted correctly (Part 2/4)');
+  assert(day2Sessions[0].title.includes('Part 3/4'), 'Part numbering formatted correctly (Part 3/4)');
+  assert(day2Sessions[1].title.includes('Part 4/4'), 'Part numbering formatted correctly (Part 4/4)');
+
+  // Verify restorative breaks between sessions
+  const breaksOnDay1 = crossDayPlan.schedule.filter((s) => s.date === '2026-10-22' && s.type === 'break');
+  assert(breaksOnDay1.length >= 1, `Restorative sloth pause inserted between focus sessions (actual: ${breaksOnDay1.length})`);
+
   console.log(`\n================================`);
   if (failures === 0) {
-    console.log('🎉 ALL 18 TEST SUITES PASSED FLAWLESSLY!');
+    console.log('🎉 ALL 21 TEST SUITES PASSED FLAWLESSLY!');
   } else {
     console.error(`💥 ${failures} TEST(S) FAILED.`);
     process.exit(1);

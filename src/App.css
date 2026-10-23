@@ -2395,3 +2395,95 @@ button.nav-item {
   background: #ffffff;
   color: #274720;
 }
+
+/* AI Duration Estimation Badges & Action Chips */
+.duration-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.duration-source-badge.provisional {
+  background: #f1f3ea;
+  color: #6c7364;
+  border: 1px dashed #c0c6b5;
+}
+
+.duration-source-badge.estimating {
+  background: #f3e8ff;
+  color: #7e22ce;
+  border: 1px solid #d8b4fe;
+  animation: pulse-soft 1.6s infinite ease-in-out;
+}
+
+.duration-source-badge.ai {
+  background: #ede9fe;
+  color: #6d28d9;
+  border: 1px solid #ddd6fe;
+}
+
+.duration-source-badge.fallback {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.duration-source-badge.manual {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
+.reestimate-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: 1px solid #e0d7ec;
+  border-radius: 4px;
+  color: #6b21a8;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  line-height: 1.4;
+}
+
+.reestimate-chip:hover:not(:disabled) {
+  background: #f3e8ff;
+  border-color: #9333ea;
+}
+
+.reestimate-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}

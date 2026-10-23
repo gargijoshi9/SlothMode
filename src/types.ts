@@ -9,11 +9,17 @@ export type Subtask = {
 export type TaskCategory = 'college' | 'exam_prep' | 'chore' | 'health' | 'personal' | 'work' | string;
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low' | 'High' | 'Medium' | 'Low';
 
+export type DurationSource = 'provisional' | 'ai_estimated' | 'fallback_estimated' | 'manual';
+
 export type Task = {
   id: number;
   title: string;
   category: TaskCategory;
   duration: number; // in minutes
+  durationSource?: DurationSource;
+  isEstimatingDuration?: boolean;
+  durationConfidence?: 'high' | 'medium' | 'low' | string;
+  estimationReasoning?: string;
   priority: 'High' | 'Medium' | 'Low';
   urgency?: 'critical' | 'high' | 'medium' | 'low';
   done: boolean;

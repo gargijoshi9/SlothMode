@@ -56,9 +56,13 @@ export async function checkOllamaHealth(baseUrl = 'http://127.0.0.1:11434', mode
  * Deterministic rule-based fallback when Ollama is unavailable or returns invalid data.
  * Always marks aiGenerated: false so the UI remains transparent and honest.
  */
-export function ruleBasedFallback(taskTitle, deadline = null, fallbackReason = 'Ollama unavailable') {
-  const title = (taskTitle || '').trim();
-  const lower = title.toLowerCase();
+export function ruleBasedFallback(taskTitleOrData, deadline = null, fallbackReason = 'Ollama unavailable') {
+  const isObj = taskTitleOrData && typeof taskTitleOrData === 'object';
+  const title = (isObj ? taskTitleOrData.title : taskTitleOrData || '').trim();
+  const description = isObj && taskTitleOrData.description ? String(taskTitleOrData.description) : '';
+  const context = isObj && taskTitleOrData.context ? String(taskTitleOrData.context) : '';
+  const fullText = `${title} ${description} ${context}`.trim();
+  const lower = fullText.toLowerCase();
 
   let category = 'personal';
   let estimatedMinutes = 30;
@@ -130,6 +134,17 @@ export function ruleBasedFallback(taskTitle, deadline = null, fallbackReason = '
     schedulingTip = 'Small progress is still progress. Start with just 5 minutes.';
   }
 
+  // Contextual scope adjustments (scaling effort with depth and complexity)
+  if (/(thesis|dissertation|comprehensive|extensive|semester project|major|full draft|methodology)/i.test(lower)) {
+    estimatedMinutes = Math.max(estimatedMinutes, 90);
+  } else if (/(quick|brief|short|5m|10m|check mail|take out)/i.test(lower)) {
+    estimatedMinutes = Math.min(estimatedMinutes, 20);
+  }
+
+  if (description && description.length > 50) {
+    estimatedMinutes = Math.min(480, Math.round(estimatedMinutes * 1.25));
+  }
+
   // Check deadline hints if provided
   let dependencyNote = null;
   if (deadline) {
@@ -171,6 +186,8 @@ export function ruleBasedFallback(taskTitle, deadline = null, fallbackReason = '
     suggestedSubtasks,
     dependencyNote,
     schedulingTip,
+    confidence: 'low',
+    reasoning: `Rule-based fallback (${fallbackReason})`,
   };
 }
 
@@ -229,7 +246,7 @@ function sanitizeClassification(parsed) {
   let suggestedSubtasks = [];
   if (Array.isArray(parsed.suggestedSubtasks)) {
     suggestedSubtasks = parsed.suggestedSubtasks
-      .map((s) => (typeof s === 'string' ? s.trim() : ''))
+      .map((s) => (typeof s === 'string' ? s.trim() : (s?.title || '')))
       .filter((s) => s.length > 0)
       .slice(0, 6);
   }
@@ -247,6 +264,11 @@ function sanitizeClassification(parsed) {
       ? parsed.schedulingTip.trim()
       : 'Work steadily in focused intervals and take restful breaks.';
 
+  const confidence = ['high', 'medium', 'low'].includes(parsed.confidence) ? parsed.confidence : 'medium';
+  const reasoning = typeof parsed.reasoning === 'string' && parsed.reasoning.trim().length > 0
+    ? parsed.reasoning.trim()
+    : 'Estimated by local Gemma AI based on task scope and complexity.';
+
   return {
     category,
     estimatedMinutes,
@@ -254,6 +276,8 @@ function sanitizeClassification(parsed) {
     suggestedSubtasks,
     dependencyNote,
     schedulingTip,
+    confidence,
+    reasoning,
   };
 }
 
@@ -265,6 +289,8 @@ export async function classifyTask(taskTitle, deadline = null, options = {}) {
   const baseUrl = options.baseUrl || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
   const modelName = options.modelName || process.env.OLLAMA_MODEL || 'gemma3:1b';
   const timeoutMs = options.timeoutMs || 15000;
+  const description = options.description || '';
+  const context = options.context || '';
 
   if (!taskTitle || typeof taskTitle !== 'string' || !taskTitle.trim()) {
     return ruleBasedFallback('Untitled task', deadline, 'Empty task title provided');
@@ -273,7 +299,7 @@ export async function classifyTask(taskTitle, deadline = null, options = {}) {
   const cleanTitle = taskTitle.trim();
 
   const systemPrompt = `You are SlothMode's calm, intelligent productivity assistant for students.
-Classify the task provided as JSON data and return actionable subtasks and realistic time estimates.
+Classify the task provided as JSON data and return actionable subtasks and realistic dynamic time estimates.
 You MUST output valid, pure JSON with no markdown formatting or commentary.
 
 JSON Schema:
@@ -281,6 +307,8 @@ JSON Schema:
   "category": "college" | "exam_prep" | "chore" | "health" | "personal" | "work",
   "estimatedMinutes": integer between 5 and 480,
   "urgency": "critical" | "high" | "medium" | "low",
+  "confidence": "high" | "medium" | "low",
+  "reasoning": "1 sentence explanation of why this duration is needed",
   "suggestedSubtasks": ["step 1", "step 2", ...],
   "dependencyNote": string | null,
   "schedulingTip": "short gentle recommendation"
@@ -288,15 +316,17 @@ JSON Schema:
 
 Guidance:
 - Categories must be one of: "college", "exam_prep", "chore", "health", "personal", "work".
-- Keep subtasks concise, concrete, and achievable (2 to 4 steps).
-- Realistic durations: reading/writing (30-60m), revision (45-90m), chores (15-30m), quick admin (10-20m).
+- Dynamic realistic student durations: quick admin/chores (10-25m), standard reading/exercise (30-60m), lab reports/problem sets (60-90m), large research papers/thesis/deep exam prep (90-240m+).
+- Consider title, description, and available context. Do not use hard-coded title mappings.
 - Urgencies: "critical" (due today or immediate risk), "high" (due soon / heavy weight), "medium" (normal), "low" (flexible).
-- Output strictly JSON.`;
+- Output strictly pure JSON.`;
 
-  // Provide task and deadline strictly as structured JSON data
+  // Provide task, description, and deadline strictly as structured JSON data
   const userPayload = JSON.stringify({
     taskTitle: cleanTitle,
-    deadline: deadline || null,
+    description: description.trim() || undefined,
+    deadline: deadline || undefined,
+    context: context.trim() || undefined,
   });
 
   const chatUrl = `${baseUrl.replace(/\/$/, '')}/api/chat`;
@@ -367,4 +397,21 @@ Guidance:
         : `Ollama unavailable (${err.message})`;
     return ruleBasedFallback(cleanTitle, deadline, reason);
   }
+}
+
+/**
+ * Dynamically estimates a task's duration and scope using local Ollama Gemma 3 1B.
+ * Accepts title, description, deadline, and context.
+ */
+export async function estimateTaskDuration(taskData, options = {}) {
+  const title = typeof taskData === 'string' ? taskData : (taskData?.title || '');
+  const description = typeof taskData === 'object' ? (taskData?.description || '') : (options.description || '');
+  const deadline = typeof taskData === 'object' ? (taskData?.deadline || null) : (options.deadline || null);
+  const context = typeof taskData === 'object' ? (taskData?.context || '') : (options.context || '');
+
+  return classifyTask(title, deadline, {
+    ...options,
+    description,
+    context,
+  });
 }

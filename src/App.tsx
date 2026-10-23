@@ -23,7 +23,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import "./App.css";
-import type { Task, PlanResponse, HealthStatus, TaskCategory, PlanningHorizon } from "./types";
+import type { Task, PlanResponse, HealthStatus, TaskCategory, PlanningHorizon, DurationSource } from "./types";
 
 function getTodayDateString(): string {
   const now = new Date();
@@ -296,6 +296,7 @@ const initialTasks: Task[] = [
     title: "Revise operating systems practical",
     category: "college",
     duration: 60,
+    durationSource: "manual",
     priority: "High",
     urgency: "high",
     done: false,
@@ -314,6 +315,8 @@ const initialTasks: Task[] = [
     title: "Complete AI assignment",
     category: "college",
     duration: 45,
+    durationSource: "ai_estimated",
+    durationConfidence: "high",
     priority: "High",
     urgency: "high",
     done: false,
@@ -332,6 +335,7 @@ const initialTasks: Task[] = [
     title: "Reply to project teammates",
     category: "personal",
     duration: 15,
+    durationSource: "manual",
     priority: "Medium",
     urgency: "medium",
     done: false,
@@ -345,6 +349,69 @@ const initialTasks: Task[] = [
     aiGenerated: false,
   },
 ];
+
+// Module-level in-flight AI estimation tracker to prevent duplicate requests and handle stale responses safely
+const inFlightEstimations = new Map<number, { title: string; controller: AbortController }>();
+
+function renderDurationBadge(task: Task, onReestimate?: () => void) {
+  if (task.isEstimatingDuration) {
+    return (
+      <span className="duration-source-badge estimating" title="Estimating task effort dynamically using local AI...">
+        <Sparkles size={10} className="spin-icon" /> Estimating...
+      </span>
+    );
+  }
+
+  const source = task.durationSource || "manual";
+  let badge = null;
+  if (source === "provisional") {
+    badge = (
+      <span className="duration-source-badge provisional" title="Provisional 30m duration assigned on creation (awaiting AI estimate or user edit)">
+        ⏱ Provisional
+      </span>
+    );
+  } else if (source === "ai_estimated") {
+    badge = (
+      <span
+        className="duration-source-badge ai"
+        title={task.estimationReasoning || "Estimated effort dynamically using local Gemma 3 1B AI"}
+      >
+        ✨ AI {task.durationConfidence ? `(${task.durationConfidence})` : ""}
+      </span>
+    );
+  } else if (source === "fallback_estimated") {
+    badge = (
+      <span className="duration-source-badge fallback" title="Estimated using gentle heuristic rules">
+        🌱 Rule-based
+      </span>
+    );
+  } else if (source === "manual") {
+    badge = (
+      <span className="duration-source-badge manual" title="Manually specified duration (never overwritten during replanning)">
+        ✏️ Manual
+      </span>
+    );
+  }
+
+  return (
+    <>
+      {badge}
+      {onReestimate && !task.isEstimatingDuration && (
+        <button
+          type="button"
+          className="reestimate-chip"
+          onClick={(e) => {
+            e.stopPropagation();
+            onReestimate();
+          }}
+          title="Re-estimate task duration with local AI"
+        >
+          <Sparkles size={9} /> Re-estimate
+        </button>
+      )}
+    </>
+  );
+}
 
 function App() {
   // Navigation tab: 'day' | 'week' | 'month'
@@ -361,6 +428,9 @@ function App() {
             ...t,
             scheduledDate: t.scheduledDate || null,
             deadline: t.deadline || null,
+            duration: Number(t.duration) || 30,
+            durationSource: (t.durationSource as DurationSource) || (t.aiGenerated ? "ai_estimated" : "manual"),
+            isEstimatingDuration: false,
           }));
         }
       }
@@ -533,6 +603,123 @@ function App() {
     .filter((task) => !task.done)
     .reduce((sum, task) => sum + (task.duration || 30), 0);
 
+  const triggerAsyncEstimation = useCallback(async (taskToEstimate: Task, isExplicitReestimate = false) => {
+    const taskId = taskToEstimate.id;
+
+    // Prevent duplicate requests if already in-flight for this task
+    const existing = inFlightEstimations.get(taskId);
+    if (existing) {
+      if (!isExplicitReestimate) {
+        return; // Already in-flight
+      }
+      existing.controller.abort();
+      inFlightEstimations.delete(taskId);
+    }
+
+    const controller = new AbortController();
+    inFlightEstimations.set(taskId, {
+      title: taskToEstimate.title,
+      controller,
+    });
+
+    // Mark task as estimating in state
+    setTasks((current) =>
+      current.map((t) => (t.id === taskId ? { ...t, isEstimatingDuration: true } : t))
+    );
+
+    try {
+      const res = await fetch("/api/estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: taskToEstimate.title,
+          context: `Scheduled: ${taskToEstimate.scheduledDate || "today"}, Category: ${taskToEstimate.category || "personal"}, Priority: ${taskToEstimate.priority || "Medium"}`,
+          deadline: taskToEstimate.deadline || undefined,
+          forceAi: isExplicitReestimate,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Estimate API responded with HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (controller.signal.aborted) return;
+      inFlightEstimations.delete(taskId);
+
+      const newDuration = Math.max(5, Math.min(480, Number(data.estimatedMinutes) || taskToEstimate.duration || 30));
+      const newSource: DurationSource = data.aiGenerated ? "ai_estimated" : "fallback_estimated";
+
+      setTasks((current) => {
+        const target = current.find((t) => t.id === taskId);
+        // Safety guard 1: Task was deleted while request was in-flight
+        if (!target) return current;
+
+        // Safety guard 2: Task title was edited while request was in-flight
+        if (target.title !== taskToEstimate.title) {
+          return current.map((t) =>
+            t.id === taskId ? { ...t, isEstimatingDuration: false } : t
+          );
+        }
+
+        // Safety guard 3: Task duration was manually set while request was in-flight
+        if (!isExplicitReestimate && target.durationSource === "manual") {
+          return current.map((t) =>
+            t.id === taskId ? { ...t, isEstimatingDuration: false } : t
+          );
+        }
+
+        return current.map((t) => {
+          if (t.id === taskId) {
+            return {
+              ...t,
+              duration: newDuration,
+              durationSource: newSource,
+              durationConfidence: data.confidence || "medium",
+              estimationReasoning: data.reasoning || "",
+              isEstimatingDuration: false,
+            };
+          }
+          return t;
+        });
+      });
+
+      // If this task is actively open in the edit modal, keep modal form in sync
+      setEditingTask((prev) => {
+        if (prev && prev.id === taskId) {
+          return {
+            ...prev,
+            duration: newDuration,
+            durationSource: newSource,
+            durationConfidence: data.confidence || "medium",
+            estimationReasoning: data.reasoning || "",
+            isEstimatingDuration: false,
+          };
+        }
+        return prev;
+      });
+      setEditForm((prev) => (prev.id === taskId ? { ...prev, duration: newDuration } : prev));
+    } catch (err: unknown) {
+      if ((err as Error)?.name === "AbortError") return;
+      console.warn("Task duration estimation failed or backend unreachable:", err);
+      inFlightEstimations.delete(taskId);
+
+      // Keep provisional duration safely and allow app to continue
+      setTasks((current) =>
+        current.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                isEstimatingDuration: false,
+                durationSource: t.durationSource || "provisional",
+              }
+            : t
+        )
+      );
+    }
+  }, []);
+
   function toggleExpandTask(id: number) {
     setExpandedTaskIds((prev) =>
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
@@ -543,11 +730,14 @@ function App() {
     event.preventDefault();
     if (!draft.trim()) return;
 
+    // Requirement 1: Assign provisional duration of 30 minutes immediately. Never prompt for duration.
     const newTask: Task = {
       id: Date.now(),
       title: draft.trim(),
       category: "personal",
-      duration: 30,
+      duration: 30, // 30-minute provisional duration
+      durationSource: "provisional",
+      isEstimatingDuration: true,
       priority: "Medium",
       urgency: "medium",
       done: false,
@@ -573,6 +763,9 @@ function App() {
     setDraft("");
     setDraftDeadline("");
     setShowDeadlineInput(false);
+
+    // Requirement 2 & 3: Run dynamic estimation asynchronously after task creation
+    triggerAsyncEstimation(newTask, false);
   }
 
   function toggleTask(id: number) {
@@ -622,6 +815,13 @@ function App() {
   }
 
   function deleteTask(id: number) {
+    // Abort and clear in-flight estimation if task is deleted
+    const inFlight = inFlightEstimations.get(id);
+    if (inFlight) {
+      inFlight.controller.abort();
+      inFlightEstimations.delete(id);
+    }
+
     setTasks((current) => current.filter((task) => task.id !== id));
     setPlan((prev) => {
       if (!prev) return null;
@@ -701,15 +901,32 @@ function App() {
     });
   }
 
+  function handleReestimateTask(id: number) {
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    const taskToEstimate: Task = {
+      ...task,
+      title: editingTask && editingTask.id === id ? editForm.title.trim() || task.title : task.title,
+      scheduledDate: editingTask && editingTask.id === id ? editForm.scheduledDate.trim() || null : task.scheduledDate,
+      deadline: editingTask && editingTask.id === id ? editForm.deadline.trim() || null : task.deadline,
+      category: editingTask && editingTask.id === id ? editForm.category : task.category,
+      urgency: editingTask && editingTask.id === id ? editForm.urgency : task.urgency,
+    };
+    triggerAsyncEstimation(taskToEstimate, true);
+  }
+
   function handleSaveEditedTask(e: React.FormEvent) {
     e.preventDefault();
     if (!editingTask || !editForm.title.trim()) return;
 
+    // Requirement 4 & 5: When saved via edit modal, mark durationSource as 'manual'
     const updated: Task = {
       ...editingTask,
       title: editForm.title.trim(),
       scheduledDate: editForm.scheduledDate.trim() || null,
       duration: Math.max(5, Math.min(480, Number(editForm.duration) || 30)),
+      durationSource: "manual",
+      isEstimatingDuration: false,
       deadline: editForm.deadline.trim() || null,
       done: editForm.done,
       category: editForm.category,
@@ -1586,6 +1803,8 @@ function App() {
                               <span>
                                 <Clock3 size={13} /> {task.duration || 30} min
                               </span>
+                              <span className="meta-dot">·</span>
+                              {renderDurationBadge(task, () => triggerAsyncEstimation(task, true))}
                               {task.scheduledDate && (
                                 <>
                                   <span className="meta-dot">·</span>
@@ -1976,6 +2195,7 @@ function App() {
                                   <span className="cal-category-tag">
                                     {task.category?.replace("_", " ")}
                                   </span>
+                                  {renderDurationBadge(task)}
 
                                   {task.deadline && (
                                     <span
@@ -2068,6 +2288,7 @@ function App() {
                         <span className="cal-category-tag">
                           {task.category?.replace("_", " ")}
                         </span>
+                        {renderDurationBadge(task)}
 
                         {task.deadline && (
                           <span className="cal-deadline-tag">
@@ -2366,6 +2587,7 @@ function App() {
                         <span className="cal-category-tag">
                           {task.category?.replace("_", " ")}
                         </span>
+                        {renderDurationBadge(task)}
 
                         {task.deadline && (
                           <span className="cal-deadline-tag">
@@ -2594,6 +2816,7 @@ function App() {
                           <span className="cal-category-tag">
                             {task.category?.replace("_", " ")}
                           </span>
+                          {renderDurationBadge(task)}
 
                           {task.deadline && (
                             <span
@@ -2760,9 +2983,54 @@ function App() {
 
                 {/* Duration */}
                 <div className="form-group">
-                  <label htmlFor="edit-task-duration">
-                    ESTIMATED DURATION (MINUTES)
-                  </label>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    <label htmlFor="edit-task-duration" style={{ margin: 0 }}>
+                      ESTIMATED DURATION (MINUTES)
+                    </label>
+                    <button
+                      type="button"
+                      className="reestimate-btn"
+                      disabled={editingTask.isEstimatingDuration}
+                      onClick={() => handleReestimateTask(editingTask.id)}
+                      title="Re-estimate task duration dynamically using local AI"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        background: "rgba(103, 58, 183, 0.08)",
+                        border: "1px solid rgba(103, 58, 183, 0.25)",
+                        borderRadius: "6px",
+                        padding: "3px 8px",
+                        color: "#5e35b1",
+                        fontSize: "11px",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      <Sparkles
+                        size={12}
+                        className={
+                          editingTask.isEstimatingDuration ? "spin-icon" : ""
+                        }
+                      />
+                      {editingTask.isEstimatingDuration
+                        ? "Estimating..."
+                        : "Re-estimate with AI"}
+                    </button>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                    {renderDurationBadge(editingTask)}
+                  </div>
+
                   <input
                     id="edit-task-duration"
                     type="number"
