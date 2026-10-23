@@ -26,6 +26,9 @@ import {
   Play,
   Pause,
   RotateCcw,
+  HelpCircle,
+  ArrowRight,
+  ArrowLeft,
 } from "lucide-react";
 import "./App.css";
 import type {
@@ -439,6 +442,27 @@ function App() {
   const [showFinishPrompt, setShowFinishPrompt] = useState(false);
   const [stuckSubtaskInput, setStuckSubtaskInput] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // First-launch onboarding state
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    try {
+      const completed = localStorage.getItem("slothmode_onboarding_completed");
+      return completed !== "true";
+    } catch {
+      return false;
+    }
+  });
+  const [onboardingStep, setOnboardingStep] = useState<number>(1);
+
+  const dismissOnboarding = () => {
+    setShowOnboarding(false);
+    setOnboardingStep(1);
+    try {
+      localStorage.setItem("slothmode_onboarding_completed", "true");
+    } catch {
+      // ignore
+    }
+  };
 
   // Week navigation state
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
@@ -1818,6 +1842,20 @@ function App() {
             })}
           </div>
         </div>
+
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #dbe5d6", display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            className="routine-guide-reopen-btn"
+            onClick={() => {
+              setOnboardingStep(1);
+              setShowOnboarding(true);
+            }}
+            title="Revisit the welcoming 3-step SlothMode guide"
+          >
+            <Sparkles size={13} /> Revisit welcome guide
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1867,6 +1905,17 @@ function App() {
           }}
         >
           <Check size={18} /> My tasks
+        </button>
+        <button
+          type="button"
+          className="nav-item"
+          onClick={() => {
+            setOnboardingStep(1);
+            setShowOnboarding(true);
+          }}
+          title="Open the welcoming 3-step SlothMode guide"
+        >
+          <HelpCircle size={18} /> Welcome guide
         </button>
 
         <div className="sidebar-bottom">
@@ -1927,6 +1976,19 @@ function App() {
                 : "Gentle Fallback Mode"}
             </span>
           </div>
+
+          <button
+            type="button"
+            className="topbar-guide-btn"
+            onClick={() => {
+              setOnboardingStep(1);
+              setShowOnboarding(true);
+            }}
+            title="Reopen SlothMode welcome guide"
+            aria-label="Reopen welcome guide"
+          >
+            <HelpCircle size={13} /> Guide
+          </button>
         </header>
 
         {/* AI Info Banner if model not ready or server offline */}
@@ -4580,6 +4642,133 @@ function App() {
             </div>
           );
         })()}
+
+        {/* First-Launch Onboarding Guide */}
+        {showOnboarding && (
+          <div
+            className="onboarding-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Welcome to SlothMode Guide"
+          >
+            <div className="onboarding-card">
+              <div className="onboarding-header">
+                <div className="onboarding-step-indicator">
+                  <span className={`step-dot ${onboardingStep === 1 ? "active" : ""}`} />
+                  <span className={`step-dot ${onboardingStep === 2 ? "active" : ""}`} />
+                  <span className={`step-dot ${onboardingStep === 3 ? "active" : ""}`} />
+                  <span className="step-count">Step {onboardingStep} of 3</span>
+                </div>
+                <button
+                  type="button"
+                  className="onboarding-skip-btn"
+                  onClick={dismissOnboarding}
+                  aria-label="Skip onboarding guide"
+                >
+                  Skip
+                </button>
+              </div>
+
+              {/* Step 1: Brain Dump */}
+              {onboardingStep === 1 && (
+                <div className="onboarding-content">
+                  <div className="onboarding-icon-wrap green">
+                    <Brain size={30} />
+                  </div>
+                  <h2>1. Brain dump: get it off your mind</h2>
+                  <p className="onboarding-desc">
+                    When studies or chores feel overwhelming, don't try to organize everything in your head.
+                    Just dump any task, assignment, or reminder into the brain dump input in natural words — like{" "}
+                    <em>"Study OS practical for 2 hours"</em>.
+                  </p>
+                  <div className="onboarding-pill-callout">
+                    <span>🌱</span>
+                    <span>No pressure. No rigid forms. Start with one small thing.</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: AI Assistance & Fallbacks */}
+              {onboardingStep === 2 && (
+                <div className="onboarding-content">
+                  <div className="onboarding-icon-wrap lavender">
+                    <Sparkles size={30} />
+                  </div>
+                  <h2>2. Local AI & gentle fallbacks</h2>
+                  <p className="onboarding-desc">
+                    SlothMode connects to your local <strong>Ollama (Gemma 3 1B)</strong> model to estimate task
+                    duration, categorize study topics, and break large assignments into bite-sized steps.
+                  </p>
+                  <div className="onboarding-ai-status-note">
+                    <div className="ai-status-note-row">
+                      <span className={`ai-dot ${isAiOnline ? "online" : "fallback"}`} />
+                      <span>
+                        {isAiOnline
+                          ? `Local Ollama is ready (${health?.ollama.configuredModel})`
+                          : "Ollama not running? Gentle fallback heuristics take over automatically"}
+                      </span>
+                    </div>
+                    <small>
+                      AI availability depends on your local Ollama setup. If Ollama is offline, SlothMode runs seamlessly using deterministic rules.
+                    </small>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Gentle Planning & Focus Sessions */}
+              {onboardingStep === 3 && (
+                <div className="onboarding-content">
+                  <div className="onboarding-icon-wrap peach">
+                    <Coffee size={30} />
+                  </div>
+                  <h2>3. Gentle planning & focus sessions</h2>
+                  <p className="onboarding-desc">
+                    Click <strong>"Make my plan"</strong> to generate a calm day or week timeline with protected
+                    routines (lunch, nap, dinner). When you're ready, click <strong>"Focus"</strong> to enter
+                    distraction-reduced Focus Mode with pause, micro-steps, and an <em>"I'm stuck"</em> breather.
+                  </p>
+                  <div className="onboarding-pill-callout">
+                    <span>🦥</span>
+                    <span>A timer reaching zero never marks tasks done without your confirmation. Rest is productive too.</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Onboarding Footer Actions */}
+              <div className="onboarding-actions">
+                {onboardingStep > 1 ? (
+                  <button
+                    type="button"
+                    className="onboarding-back-btn"
+                    onClick={() => setOnboardingStep((s) => s - 1)}
+                  >
+                    <ArrowLeft size={15} /> Back
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                {onboardingStep < 3 ? (
+                  <button
+                    type="button"
+                    className="onboarding-next-btn"
+                    onClick={() => setOnboardingStep((s) => s + 1)}
+                  >
+                    Next <ArrowRight size={15} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="onboarding-start-btn"
+                    onClick={dismissOnboarding}
+                  >
+                    Let's start 🦥
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         <footer className="footer">
           <Moon size={15} /> You are a human being, not a productivity machine.
