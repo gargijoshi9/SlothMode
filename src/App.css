@@ -336,6 +336,69 @@ a {
   margin: 13px 0 0;
 }
 
+/* Brain Dump Plan Action Bar (Directly below task form) */
+.brain-dump-plan-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px dashed #e2e8dc;
+  flex-wrap: wrap;
+}
+
+.brain-dump-hint-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #7b8874;
+  font-size: 12px;
+}
+
+.brain-dump-hint-wrap .hint-icon {
+  color: #55794f;
+  flex-shrink: 0;
+}
+
+.brain-dump-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.primary-make-plan-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 10px;
+  background: #55794f;
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(85, 121, 79, 0.25);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.primary-make-plan-btn:hover:not(:disabled) {
+  background: #42643d;
+  box-shadow: 0 4px 14px rgba(66, 100, 61, 0.32);
+  transform: translateY(-1px);
+}
+
+.primary-make-plan-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1033,24 +1096,54 @@ a {
 }
 
 .replan-button {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   border: 1px solid #d4decb;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #fff;
   color: #4f6848;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 0 14px;
-  min-height: 39px;
+  font: 600 12px Manrope, sans-serif;
+  padding: 6px 14px;
+  height: 34px;
+  box-sizing: border-box;
   white-space: nowrap;
+  cursor: pointer;
+  transition: all .15s ease;
 }
 
-.replan-button:hover {
+.replan-button:hover:not(:disabled) {
   background: #f4f8f1;
   border-color: #b5c7aa;
+}
+
+.replan-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tasks-status-badge-wrap {
+  display: flex;
+  align-items: center;
+}
+
+.tasks-status-pill {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #6b7a66;
+  background: #f0f5ec;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid #e1eadc;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tasks-status-pill strong {
+  color: #3b5038;
+  font-weight: 700;
 }
 
 .loading-spinner {
@@ -1065,6 +1158,7 @@ a {
 
 /* Schedule Timeline Section */
 .schedule-section {
+  scroll-margin-top: 24px;
   margin-top: 28px;
   background: #fff;
   border: 1px solid #e9ece4;
@@ -1075,27 +1169,52 @@ a {
 
 .schedule-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 14px;
   margin-bottom: 20px;
-  gap: 15px;
 }
 
-.schedule-header h2 {
-  font: 700 18px Manrope, sans-serif;
-  margin: 0 0 5px;
+.schedule-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
-.schedule-header p {
+.schedule-header-titles h2 {
+  font: 700 20px Manrope, sans-serif;
+  margin: 0 0 4px;
+  color: #273b24;
+}
+
+.schedule-header-titles p {
   font-size: 12px;
   color: #8c9384;
   margin: 0;
+}
+
+.schedule-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.schedule-meta-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e7ece2;
 }
 
 .schedule-meta-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
 }
 
 .schedule-chip {
@@ -1106,8 +1225,9 @@ a {
   font-weight: 600;
   background: #f2f5ed;
   color: #55794f;
-  padding: 5px 10px;
+  padding: 5px 11px;
   border-radius: 8px;
+  border: 1px solid #e5ede0;
 }
 
 .schedule-timeline {
@@ -1325,7 +1445,70 @@ button.nav-item {
   background: #e2efde;
 }
 
-/* Weekly Summary Stats Grid */
+/* Minimal Weekly & Monthly Summary Stats Bar */
+.week-minimal-stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.week-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #e7ece2;
+  border-radius: 9px;
+  padding: 6px 13px;
+  font-size: 12px;
+  color: #4f5b4a;
+  box-shadow: 0 1px 3px rgba(41, 56, 46, 0.03);
+  transition: all .15s ease;
+}
+
+.week-stat-pill:hover {
+  border-color: #ccd8c5;
+}
+
+.week-stat-pill.overdue {
+  background: #fdf5f3;
+  border-color: #f7d2cb;
+  color: #b33924;
+}
+
+.week-stat-pill.calm {
+  color: #55794f;
+}
+
+.week-stat-pill .stat-pill-value {
+  font-weight: 700;
+  color: #273b24;
+}
+
+.week-stat-pill.overdue .stat-pill-value {
+  color: #b33924;
+}
+
+.week-stat-pill .stat-pill-label {
+  color: #838e7d;
+  font-size: 11px;
+}
+
+.stat-pill-icon.green {
+  color: #55794f;
+}
+
+.stat-pill-icon.peach {
+  color: #c97d4c;
+}
+
+.stat-pill-icon.red {
+  color: #b33924;
+}
+
+/* Weekly Summary Stats Grid (Legacy/Fallback) */
 .week-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1401,18 +1584,18 @@ button.nav-item {
 .calendar-col {
   background: #fff;
   border: 1px solid #eaede5;
-  border-radius: 14px;
-  padding: 12px 10px;
+  border-radius: 12px;
+  padding: 10px 8px;
   display: flex;
   flex-direction: column;
-  min-height: 380px;
+  min-height: 280px;
   transition: all .15s ease;
 }
 
 .calendar-col.is-today {
   background: #fbfdfa;
-  border-color: #8cb482;
-  box-shadow: 0 0 0 1px #8cb482;
+  border-color: #6d9c63;
+  box-shadow: 0 0 0 1px #6d9c63;
 }
 
 .col-header {
@@ -1463,22 +1646,32 @@ button.nav-item {
 }
 
 .col-empty-msg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   font-size: 11px;
-  color: #aeb4a8;
-  text-align: center;
-  margin-top: 30px;
-  font-style: italic;
+  color: #b6beaf;
+  margin: auto 0;
+  padding: 24px 0;
+  user-select: none;
+}
+
+.empty-cal-dot {
+  font-size: 16px;
+  line-height: 1;
+  color: #cbd5c5;
 }
 
 /* Calendar Task Card */
 .cal-task-card {
-  background: #fbfcf9;
-  border: 1px solid #e9ece4;
-  border-radius: 10px;
-  padding: 9px 10px;
+  background: #fcfdfb;
+  border: 1px solid #e5eae0;
+  border-radius: 9px;
+  padding: 8px 9px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   cursor: pointer;
   transition: all .15s ease;
   position: relative;
@@ -1486,9 +1679,9 @@ button.nav-item {
 
 .cal-task-card:hover {
   background: #fff;
-  border-color: #92b589;
+  border-color: #7fa675;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(41, 56, 46, 0.05);
+  box-shadow: 0 3px 10px rgba(41, 56, 46, 0.05);
 }
 
 .cal-task-card.task-done {

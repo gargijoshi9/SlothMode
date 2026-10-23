@@ -521,6 +521,7 @@ function App() {
   });
 
   const [showRoutineSettings, setShowRoutineSettings] = useState(false);
+  const [showWeekRoutines, setShowWeekRoutines] = useState(false);
 
   // Selected date for viewing timeline in Day view, persisted across reloads
   const [selectedTimelineDate, setSelectedTimelineDate] = useState<string>(() => {
@@ -1092,6 +1093,15 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function scrollToTimeline(delay = 100) {
+    setTimeout(() => {
+      const el = document.getElementById("gentle-timeline");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, delay);
+  }
+
   async function generatePlan(isReplan = false, overrideHorizon?: PlanningHorizon) {
     if (tasks.length === 0) return;
     const targetHorizon = overrideHorizon || planningHorizon;
@@ -1174,6 +1184,10 @@ function App() {
         localStorage.setItem("slothmode_selected_timeline_date", nextSelectedDate);
       } catch {
         // ignore
+      }
+
+      if (!overrideHorizon || overrideHorizon === "today" || overrideHorizon === "tomorrow") {
+        scrollToTimeline(150);
       }
 
       // Update tasks with AI enriched attributes while strictly preserving each task's scheduledDate
@@ -1270,6 +1284,250 @@ function App() {
   const monthOverdueCount = monthTasks.filter((t) => isTaskOverdue(t)).length;
 
   const monthGridCells = getMonthGrid(currentMonthDate, currentLocalDateStr);
+
+  const renderRoutineSettingsCard = () => (
+    <div className="routine-settings-card" role="region" aria-label="Routine and Break Settings">
+      <div className="routine-settings-header">
+        <div className="routine-title-wrap">
+          <Coffee size={16} className="routine-icon" />
+          <div>
+            <h4>Routine & Flexible Breaks</h4>
+            <p>Tailor your focus session lengths and break rhythm to match your study flow.</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="routine-close-btn"
+          onClick={() => setShowRoutineSettings(false)}
+          title="Close settings"
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      <div className="routine-settings-grid">
+        {/* 1. Break Behavior */}
+        <div className="routine-setting-group">
+          <label className="routine-label">
+            BREAK BEHAVIOR
+            <span className="routine-sublabel">When should pauses happen?</span>
+          </label>
+          <div className="routine-pill-group" role="radiogroup" aria-label="Break behavior">
+            <button
+              type="button"
+              className={`routine-pill ${schedulerSettings.breakBehavior === "optional" ? "active" : ""}`}
+              onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "optional" }))}
+            >
+              ☕ Optional (Default)
+            </button>
+            <button
+              type="button"
+              className={`routine-pill ${schedulerSettings.breakBehavior === "automatic" ? "active" : ""}`}
+              onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "automatic" }))}
+            >
+              ⏱ Automatic
+            </button>
+            <button
+              type="button"
+              className={`routine-pill ${schedulerSettings.breakBehavior === "after_task" ? "active" : ""}`}
+              onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "after_task" }))}
+            >
+              🏁 After Task
+            </button>
+          </div>
+          <p className="routine-behavior-hint">
+            {schedulerSettings.breakBehavior === "optional" &&
+              "Sessions run back-to-back when time allows. You decide when to pause rather than forcing breaks into your plan."}
+            {schedulerSettings.breakBehavior === "automatic" &&
+              `Automatically schedules a gentle ${schedulerSettings.defaultBreakMinutes}m pause after each focus session.`}
+            {schedulerSettings.breakBehavior === "after_task" &&
+              `Keeps multi-session tasks focused back-to-back, placing a ${schedulerSettings.defaultBreakMinutes}m break only after finishing the task.`}
+          </p>
+        </div>
+
+        {/* 2. Focus Session Length (Min 45m, Max 120m) */}
+        <div className="routine-setting-group">
+          <label className="routine-label">
+            MAX FOCUS SESSION
+            <span className="routine-sublabel">Long tasks split into sessions up to this limit</span>
+          </label>
+          <div className="routine-pill-group" role="radiogroup" aria-label="Max focus session length">
+            {[45, 60, 90, 120].map((mins) => (
+              <button
+                key={mins}
+                type="button"
+                className={`routine-pill ${schedulerSettings.focusSessionMaxMinutes === mins ? "active" : ""}`}
+                onClick={() => setSchedulerSettings((s) => ({ ...s, focusSessionMaxMinutes: mins }))}
+              >
+                {mins}m {mins === 120 ? "(Default)" : ""}
+              </button>
+            ))}
+          </div>
+          <p className="routine-behavior-hint">
+            Minimum focus session: 45m. Tasks longer than {schedulerSettings.focusSessionMaxMinutes}m split gently into 45–{schedulerSettings.focusSessionMaxMinutes}m sessions without losing effort.
+          </p>
+        </div>
+
+        {/* 3. Break Duration */}
+        <div className="routine-setting-group">
+          <label className="routine-label">
+            DEFAULT BREAK DURATION
+            <span className="routine-sublabel">Length of restorative pauses</span>
+          </label>
+          <div className="routine-pill-group" role="radiogroup" aria-label="Default break duration">
+            {[5, 10, 15, 20].map((mins) => (
+              <button
+                key={mins}
+                type="button"
+                className={`routine-pill ${schedulerSettings.defaultBreakMinutes === mins ? "active" : ""}`}
+                onClick={() => setSchedulerSettings((s) => ({ ...s, defaultBreakMinutes: mins }))}
+              >
+                {mins}m {mins === 10 ? "(Default)" : ""}
+              </button>
+            ))}
+          </div>
+          <p className="routine-behavior-hint">
+            {schedulerSettings.breakBehavior === "optional"
+              ? "Saved for your restorative pauses when you decide to take them."
+              : `Inserted automatically in ${schedulerSettings.breakBehavior === "automatic" ? "automatic" : "after-task"} mode.`}
+          </p>
+        </div>
+
+        {/* Routine Validation Banner */}
+        {routineValidationErrors.length > 0 && (
+          <div className="routine-validation-banner" role="alert">
+            <div className="routine-validation-header">
+              <AlertTriangle size={15} />
+              <span>Protected Routine Time Conflict</span>
+            </div>
+            <ul>
+              {routineValidationErrors.map((err, idx) => (
+                <li key={idx}>{err}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* 4. Protected Daily Routine Blocks & Day Boundaries */}
+        <div className="routine-blocks-editor">
+          <div className="routine-blocks-top-bar">
+            <div className="routine-blocks-heading">
+              <span style={{ fontSize: "16px" }}>🍱</span>
+              <div>
+                <h5>Protected Daily Routine Blocks</h5>
+                <p>Non-working protected intervals that the scheduler plans your study flow around.</p>
+              </div>
+            </div>
+            <div className="routine-window-controls">
+              <div className="routine-window-field">
+                <span>Day starts:</span>
+                <input
+                  type="time"
+                  className="routine-time-input"
+                  value={routineSettings.dayStartTime}
+                  onChange={(e) =>
+                    setRoutineSettings((s) => ({ ...s, dayStartTime: e.target.value }))
+                  }
+                  aria-label="Day start time"
+                />
+              </div>
+              <div className="routine-window-field">
+                <span>Day ends:</span>
+                <input
+                  type="time"
+                  className="routine-time-input"
+                  value={routineSettings.dayEndTime}
+                  onChange={(e) =>
+                    setRoutineSettings((s) => ({ ...s, dayEndTime: e.target.value }))
+                  }
+                  aria-label="Day end time"
+                />
+              </div>
+              <button
+                type="button"
+                className="routine-reset-btn"
+                onClick={resetRoutineSettings}
+                title="Reset routine times and blocks to default"
+              >
+                Reset Defaults
+              </button>
+            </div>
+          </div>
+
+          <div className="routine-blocks-list">
+            {routineSettings.blocks.map((block) => {
+              const timeSpan = formatBlockSpan(block.startTime, block.durationMinutes);
+              return (
+                <div
+                  key={block.id}
+                  className={`routine-block-row ${!block.enabled ? "disabled" : ""}`}
+                >
+                  <div className="routine-block-left">
+                    <input
+                      type="checkbox"
+                      className="routine-checkbox"
+                      checked={block.enabled}
+                      onChange={(e) =>
+                        updateRoutineBlock(block.id, { enabled: e.target.checked })
+                      }
+                      id={`routine-check-${block.id}`}
+                      aria-label={`Enable or disable ${block.label}`}
+                    />
+                    <div className="routine-block-label-wrap">
+                      <label
+                        htmlFor={`routine-check-${block.id}`}
+                        className="routine-block-title"
+                        style={{ cursor: "pointer" }}
+                      >
+                        <span>{block.icon || "🍱"}</span>
+                        <span>{block.label}</span>
+                      </label>
+                      <span className="routine-block-timespan">
+                        {block.enabled
+                          ? `${timeSpan} (${block.durationMinutes}m)`
+                          : "Disabled"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="routine-block-inputs">
+                    <input
+                      type="time"
+                      className="routine-time-input"
+                      value={block.startTime}
+                      disabled={!block.enabled}
+                      onChange={(e) =>
+                        updateRoutineBlock(block.id, { startTime: e.target.value })
+                      }
+                      aria-label={`${block.label} start time`}
+                    />
+                    <div className="routine-duration-wrap">
+                      <input
+                        type="number"
+                        min="5"
+                        max="240"
+                        step="5"
+                        className="routine-duration-input"
+                        value={block.durationMinutes}
+                        disabled={!block.enabled}
+                        onChange={(e) =>
+                          updateRoutineBlock(block.id, {
+                            durationMinutes: Math.max(5, Number(e.target.value) || 5),
+                          })
+                        }
+                        aria-label={`${block.label} duration in minutes`}
+                      />
+                      <span>min</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <main className="app-shell">
@@ -1543,10 +1801,84 @@ function App() {
                 </div>
               </form>
 
-              <p className="hint">
-                <Sparkles size={14} /> Local AI breaks down your tasks and schedules calm breaks.
-              </p>
+              <div className="brain-dump-plan-bar">
+                <div className="brain-dump-hint-wrap">
+                  <Sparkles size={14} className="hint-icon" />
+                  <span>Local AI breaks down your tasks and schedules calm breaks.</span>
+                </div>
+
+                <div className="brain-dump-actions">
+                  {!plan && (
+                    <>
+                      <div
+                        className="horizon-pills-container"
+                        role="radiogroup"
+                        aria-label="Planning Horizon"
+                      >
+                        {(
+                          [
+                            { key: "today", label: "Today" },
+                            { key: "tomorrow", label: "Tomorrow" },
+                            { key: "week", label: "This Week" },
+                            { key: "month", label: "This Month" },
+                          ] as const
+                        ).map((h) => (
+                          <button
+                            key={h.key}
+                            type="button"
+                            className={`horizon-pill ${
+                              planningHorizon === h.key ? "active" : ""
+                            }`}
+                            onClick={() => setPlanningHorizon(h.key)}
+                            aria-checked={planningHorizon === h.key}
+                            role="radio"
+                          >
+                            {h.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
+                        onClick={() => setShowRoutineSettings((prev) => !prev)}
+                        title="Configure focus sessions and break routine"
+                        aria-expanded={showRoutineSettings}
+                      >
+                        <SlidersHorizontal size={13} />
+                        <span>Breaks:</span>
+                        <strong style={{ textTransform: "capitalize" }}>
+                          {schedulerSettings.breakBehavior === "after_task" ? "After Task" : schedulerSettings.breakBehavior}
+                        </strong>
+                      </button>
+                    </>
+                  )}
+
+                  <button
+                    type="button"
+                    className="plan-button primary-make-plan-btn"
+                    onClick={() => {
+                      scrollToTimeline(50);
+                      generatePlan(false);
+                    }}
+                    disabled={isPlanning || tasks.length === 0}
+                    title={
+                      tasks.length === 0
+                        ? "Add tasks above first, then generate your calm plan"
+                        : `Generate your calm ${planningHorizon} schedule`
+                    }
+                  >
+                    <Sparkles
+                      size={16}
+                      className={isPlanning ? "loading-spinner" : ""}
+                    />
+                    {isPlanning ? "Planning..." : "Make my plan"}
+                  </button>
+                </div>
+              </div>
             </section>
+
+            {!plan && showRoutineSettings && renderRoutineSettingsCard()}
 
             <section className="stats-grid">
               <div className="stat-card">
@@ -1656,40 +1988,115 @@ function App() {
                 .reduce((acc, curr) => acc + curr.durationMinutes, 0);
 
               return (
-                <section className="schedule-section">
+                <section className="schedule-section" id="gentle-timeline">
                   <div className="schedule-header">
-                    <div>
-                      <p className="eyebrow">YOUR GENTLE TIMELINE</p>
-                      <h2>
-                        {activeTimelineDate === currentLocalDateStr
-                          ? "Today"
-                          : activeTimelineDate === getTomorrowDateString()
-                          ? "Tomorrow"
-                          : formatDisplayDate(activeTimelineDate)}
-                        's Pace & Flow
-                      </h2>
-                      <p>
-                        Working window: {plan.dayWindow.start} – {plan.dayWindow.end} ·{" "}
-                        {plan.aiStatus?.note}
-                      </p>
+                    <div className="schedule-header-top">
+                      <div className="schedule-header-titles">
+                        <p className="eyebrow">YOUR GENTLE TIMELINE</p>
+                        <h2>
+                          {activeTimelineDate === currentLocalDateStr
+                            ? "Today"
+                            : activeTimelineDate === getTomorrowDateString()
+                            ? "Tomorrow"
+                            : formatDisplayDate(activeTimelineDate)}
+                          's Pace & Flow
+                        </h2>
+                        <p>
+                          Working window: {plan.dayWindow.start} – {plan.dayWindow.end} ·{" "}
+                          {plan.aiStatus?.note}
+                        </p>
+                      </div>
+
+                      <div className="schedule-header-actions">
+                        {/* Horizon selector: Today, Tomorrow, This Week, This Month */}
+                        <div
+                          className="horizon-pills-container"
+                          role="radiogroup"
+                          aria-label="Planning Horizon"
+                        >
+                          {(
+                            [
+                              { key: "today", label: "Today" },
+                              { key: "tomorrow", label: "Tomorrow" },
+                              { key: "week", label: "This Week" },
+                              { key: "month", label: "This Month" },
+                            ] as const
+                          ).map((h) => (
+                            <button
+                              key={h.key}
+                              type="button"
+                              className={`horizon-pill ${
+                                planningHorizon === h.key ? "active" : ""
+                              }`}
+                              onClick={() => {
+                                setPlanningHorizon(h.key);
+                                if (h.key === "today") {
+                                  setSelectedTimelineDate(getTodayDateString());
+                                } else if (h.key === "tomorrow") {
+                                  setSelectedTimelineDate(getTomorrowDateString());
+                                }
+                              }}
+                              aria-checked={planningHorizon === h.key}
+                              role="radio"
+                            >
+                              {h.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Routine & Break Settings Toggle */}
+                        <button
+                          type="button"
+                          className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
+                          onClick={() => setShowRoutineSettings((prev) => !prev)}
+                          title="Configure focus sessions and break routine"
+                          aria-expanded={showRoutineSettings}
+                        >
+                          <SlidersHorizontal size={13} />
+                          <span>Breaks:</span>
+                          <strong style={{ textTransform: "capitalize" }}>
+                            {schedulerSettings.breakBehavior === "after_task" ? "After Task" : schedulerSettings.breakBehavior}
+                          </strong>
+                        </button>
+
+                        {/* Replan button */}
+                        <button
+                          type="button"
+                          className="replan-button"
+                          onClick={() => generatePlan(true)}
+                          disabled={isPlanning || tasks.length === 0}
+                          title="Replan remaining tasks without losing completed progress"
+                        >
+                          <RefreshCw
+                            size={14}
+                            className={isPlanning ? "loading-spinner" : ""}
+                          />
+                          <span>Replan</span>
+                        </button>
+                      </div>
                     </div>
-                    <div className="schedule-meta-chips">
-                      <span className="schedule-chip">
-                        <Clock3 size={13} /> {dayFocusMins}m Focus
-                      </span>
-                      <span className="schedule-chip">
-                        <Coffee size={13} /> {dayBreakMins}m Rest
-                      </span>
-                      {dayRoutineMins > 0 && (
-                        <span className="schedule-chip routine-chip">
-                          🍱 {dayRoutineMins}m Protected
+
+                    <div className="schedule-meta-bar">
+                      <div className="schedule-meta-chips">
+                        <span className="schedule-chip">
+                          <Clock3 size={13} /> {dayFocusMins}m Focus
                         </span>
-                      )}
-                      <span className="schedule-chip">
-                        <Layers size={13} /> {displayedScheduleItems.length} Sessions
-                      </span>
+                        <span className="schedule-chip">
+                          <Coffee size={13} /> {dayBreakMins}m Rest
+                        </span>
+                        {dayRoutineMins > 0 && (
+                          <span className="schedule-chip routine-chip">
+                            🍱 {dayRoutineMins}m Protected
+                          </span>
+                        )}
+                        <span className="schedule-chip">
+                          <Layers size={13} /> {displayedScheduleItems.length} Sessions
+                        </span>
+                      </div>
                     </div>
                   </div>
+
+                  {showRoutineSettings && renderRoutineSettingsCard()}
 
                   {/* Multi-date switch chips when plan covers multiple dates */}
                   {allDates.length > 1 && (
@@ -1881,323 +2288,13 @@ function App() {
                     <span>({tasks.length})</span>
                   </h2>
                 </div>
-                <div className="plan-actions-group">
-                  {/* Planning Horizon Selector */}
-                  <div
-                    className="horizon-pills-container"
-                    role="radiogroup"
-                    aria-label="Planning Horizon"
-                  >
-                    {(
-                      [
-                        { key: "today", label: "Today" },
-                        { key: "tomorrow", label: "Tomorrow" },
-                        { key: "week", label: "This Week" },
-                        { key: "month", label: "This Month" },
-                      ] as const
-                    ).map((h) => (
-                      <button
-                        key={h.key}
-                        type="button"
-                        className={`horizon-pill ${
-                          planningHorizon === h.key ? "active" : ""
-                        }`}
-                        onClick={() => setPlanningHorizon(h.key)}
-                        aria-checked={planningHorizon === h.key}
-                        role="radio"
-                      >
-                        {h.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Routine & Break Settings Toggle */}
-                  <button
-                    type="button"
-                    className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
-                    onClick={() => setShowRoutineSettings((prev) => !prev)}
-                    title="Configure focus sessions and break routine"
-                    aria-expanded={showRoutineSettings}
-                  >
-                    <SlidersHorizontal size={13} />
-                    <span>Breaks:</span>
-                    <strong style={{ textTransform: "capitalize" }}>
-                      {schedulerSettings.breakBehavior === "after_task" ? "After Task" : schedulerSettings.breakBehavior}
-                    </strong>
-                  </button>
-
-                  {plan && (
-                    <button
-                      className="replan-button"
-                      onClick={() => generatePlan(true)}
-                      disabled={isPlanning || tasks.length === 0}
-                      title="Replan remaining tasks without losing completed progress"
-                    >
-                      <RefreshCw
-                        size={15}
-                        className={isPlanning ? "loading-spinner" : ""}
-                      />
-                      Replan
-                    </button>
-                  )}
-                  <button
-                    className="plan-button"
-                    onClick={() => generatePlan(false)}
-                    disabled={isPlanning || tasks.length === 0}
-                  >
-                    <Sparkles
-                      size={17}
-                      className={isPlanning ? "loading-spinner" : ""}
-                    />
-                    {isPlanning ? "Planning..." : "Make my plan"}
-                  </button>
+                <div className="tasks-status-badge-wrap">
+                  <span className="tasks-status-pill">
+                    <strong>{tasks.filter((t) => t.done).length}</strong> completed ·{" "}
+                    <strong>{tasks.filter((t) => !t.done).length}</strong> remaining
+                  </span>
                 </div>
               </div>
-
-              {/* Routine & Flexible Breaks Settings Panel */}
-              {showRoutineSettings && (
-                <div className="routine-settings-card" role="region" aria-label="Routine and Break Settings">
-                  <div className="routine-settings-header">
-                    <div className="routine-title-wrap">
-                      <Coffee size={16} className="routine-icon" />
-                      <div>
-                        <h4>Routine & Flexible Breaks</h4>
-                        <p>Tailor your focus session lengths and break rhythm to match your study flow.</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="routine-close-btn"
-                      onClick={() => setShowRoutineSettings(false)}
-                      title="Close settings"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-
-                  <div className="routine-settings-grid">
-                    {/* 1. Break Behavior */}
-                    <div className="routine-setting-group">
-                      <label className="routine-label">
-                        BREAK BEHAVIOR
-                        <span className="routine-sublabel">When should pauses happen?</span>
-                      </label>
-                      <div className="routine-pill-group" role="radiogroup" aria-label="Break behavior">
-                        <button
-                          type="button"
-                          className={`routine-pill ${schedulerSettings.breakBehavior === "optional" ? "active" : ""}`}
-                          onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "optional" }))}
-                        >
-                          ☕ Optional (Default)
-                        </button>
-                        <button
-                          type="button"
-                          className={`routine-pill ${schedulerSettings.breakBehavior === "automatic" ? "active" : ""}`}
-                          onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "automatic" }))}
-                        >
-                          ⏱ Automatic
-                        </button>
-                        <button
-                          type="button"
-                          className={`routine-pill ${schedulerSettings.breakBehavior === "after_task" ? "active" : ""}`}
-                          onClick={() => setSchedulerSettings((s) => ({ ...s, breakBehavior: "after_task" }))}
-                        >
-                          🏁 After Task
-                        </button>
-                      </div>
-                      <p className="routine-behavior-hint">
-                        {schedulerSettings.breakBehavior === "optional" &&
-                          "Sessions run back-to-back when time allows. You decide when to pause rather than forcing breaks into your plan."}
-                        {schedulerSettings.breakBehavior === "automatic" &&
-                          `Automatically schedules a gentle ${schedulerSettings.defaultBreakMinutes}m pause after each focus session.`}
-                        {schedulerSettings.breakBehavior === "after_task" &&
-                          `Keeps multi-session tasks focused back-to-back, placing a ${schedulerSettings.defaultBreakMinutes}m break only after finishing the task.`}
-                      </p>
-                    </div>
-
-                    {/* 2. Focus Session Length (Min 45m, Max 120m) */}
-                    <div className="routine-setting-group">
-                      <label className="routine-label">
-                        MAX FOCUS SESSION
-                        <span className="routine-sublabel">Long tasks split into sessions up to this limit</span>
-                      </label>
-                      <div className="routine-pill-group" role="radiogroup" aria-label="Max focus session length">
-                        {[45, 60, 90, 120].map((mins) => (
-                          <button
-                            key={mins}
-                            type="button"
-                            className={`routine-pill ${schedulerSettings.focusSessionMaxMinutes === mins ? "active" : ""}`}
-                            onClick={() => setSchedulerSettings((s) => ({ ...s, focusSessionMaxMinutes: mins }))}
-                          >
-                            {mins}m {mins === 120 ? "(Default)" : ""}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="routine-behavior-hint">
-                        Minimum focus session: 45m. Tasks longer than {schedulerSettings.focusSessionMaxMinutes}m split gently into 45–{schedulerSettings.focusSessionMaxMinutes}m sessions without losing effort.
-                      </p>
-                    </div>
-
-                    {/* 3. Break Duration */}
-                    <div className="routine-setting-group">
-                      <label className="routine-label">
-                        DEFAULT BREAK DURATION
-                        <span className="routine-sublabel">Length of restorative pauses</span>
-                      </label>
-                      <div className="routine-pill-group" role="radiogroup" aria-label="Default break duration">
-                        {[5, 10, 15, 20].map((mins) => (
-                          <button
-                            key={mins}
-                            type="button"
-                            className={`routine-pill ${schedulerSettings.defaultBreakMinutes === mins ? "active" : ""}`}
-                            onClick={() => setSchedulerSettings((s) => ({ ...s, defaultBreakMinutes: mins }))}
-                          >
-                            {mins}m {mins === 10 ? "(Default)" : ""}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="routine-behavior-hint">
-                        {schedulerSettings.breakBehavior === "optional"
-                          ? "Saved for your restorative pauses when you decide to take them."
-                          : `Inserted automatically in ${schedulerSettings.breakBehavior === "automatic" ? "automatic" : "after-task"} mode.`}
-                      </p>
-                    </div>
-
-                    {/* Routine Validation Banner */}
-                    {routineValidationErrors.length > 0 && (
-                      <div className="routine-validation-banner" role="alert">
-                        <div className="routine-validation-header">
-                          <AlertTriangle size={15} />
-                          <span>Protected Routine Time Conflict</span>
-                        </div>
-                        <ul>
-                          {routineValidationErrors.map((err, idx) => (
-                            <li key={idx}>{err}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {/* 4. Protected Daily Routine Blocks & Day Boundaries */}
-                    <div className="routine-blocks-editor">
-                      <div className="routine-blocks-top-bar">
-                        <div className="routine-blocks-heading">
-                          <span style={{ fontSize: "16px" }}>🍱</span>
-                          <div>
-                            <h5>Protected Daily Routine Blocks</h5>
-                            <p>Non-working protected intervals that the scheduler plans your study flow around.</p>
-                          </div>
-                        </div>
-                        <div className="routine-window-controls">
-                          <div className="routine-window-field">
-                            <span>Day starts:</span>
-                            <input
-                              type="time"
-                              className="routine-time-input"
-                              value={routineSettings.dayStartTime}
-                              onChange={(e) =>
-                                setRoutineSettings((s) => ({ ...s, dayStartTime: e.target.value }))
-                              }
-                              aria-label="Day start time"
-                            />
-                          </div>
-                          <div className="routine-window-field">
-                            <span>Day ends:</span>
-                            <input
-                              type="time"
-                              className="routine-time-input"
-                              value={routineSettings.dayEndTime}
-                              onChange={(e) =>
-                                setRoutineSettings((s) => ({ ...s, dayEndTime: e.target.value }))
-                              }
-                              aria-label="Day end time"
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            className="routine-reset-btn"
-                            onClick={resetRoutineSettings}
-                            title="Reset routine times and blocks to default"
-                          >
-                            Reset Defaults
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="routine-blocks-list">
-                        {routineSettings.blocks.map((block) => {
-                          const timeSpan = formatBlockSpan(block.startTime, block.durationMinutes);
-                          return (
-                            <div
-                              key={block.id}
-                              className={`routine-block-row ${!block.enabled ? "disabled" : ""}`}
-                            >
-                              <div className="routine-block-left">
-                                <input
-                                  type="checkbox"
-                                  className="routine-checkbox"
-                                  checked={block.enabled}
-                                  onChange={(e) =>
-                                    updateRoutineBlock(block.id, { enabled: e.target.checked })
-                                  }
-                                  id={`routine-check-${block.id}`}
-                                  aria-label={`Enable or disable ${block.label}`}
-                                />
-                                <div className="routine-block-label-wrap">
-                                  <label
-                                    htmlFor={`routine-check-${block.id}`}
-                                    className="routine-block-title"
-                                    style={{ cursor: "pointer" }}
-                                  >
-                                    <span>{block.icon || "🍱"}</span>
-                                    <span>{block.label}</span>
-                                  </label>
-                                  <span className="routine-block-timespan">
-                                    {block.enabled
-                                      ? `${timeSpan} (${block.durationMinutes}m)`
-                                      : "Disabled"}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="routine-block-inputs">
-                                <input
-                                  type="time"
-                                  className="routine-time-input"
-                                  value={block.startTime}
-                                  disabled={!block.enabled}
-                                  onChange={(e) =>
-                                    updateRoutineBlock(block.id, { startTime: e.target.value })
-                                  }
-                                  aria-label={`${block.label} start time`}
-                                />
-                                <div className="routine-duration-wrap">
-                                  <input
-                                    type="number"
-                                    min="5"
-                                    max="240"
-                                    step="5"
-                                    className="routine-duration-input"
-                                    value={block.durationMinutes}
-                                    disabled={!block.enabled}
-                                    onChange={(e) =>
-                                      updateRoutineBlock(block.id, {
-                                        durationMinutes: Math.max(5, Number(e.target.value) || 5),
-                                      })
-                                    }
-                                    aria-label={`${block.label} duration in minutes`}
-                                  />
-                                  <span>min</span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Overdue Tasks Notice */}
               {tasks.some((t) => isTaskOverdue(t) && !t.done) && (
@@ -2484,7 +2581,7 @@ function App() {
                   onClick={prevWeek}
                   title="Go to previous week"
                 >
-                  <ChevronLeft size={16} /> Prev week
+                  <ChevronLeft size={15} /> Prev
                 </button>
                 <button
                   type="button"
@@ -2500,14 +2597,22 @@ function App() {
                   onClick={nextWeek}
                   title="Go to next week"
                 >
-                  Next week <ChevronRight size={16} />
+                  Next <ChevronRight size={15} />
+                </button>
+                <button
+                  type="button"
+                  className={`week-nav-btn ${showWeekRoutines ? "active" : ""}`}
+                  onClick={() => setShowWeekRoutines((prev) => !prev)}
+                  title="Show or hide protected routines (lunch, nap, dinner) in week view"
+                >
+                  🍱 {showWeekRoutines ? "Hide routines" : "Show routines"}
                 </button>
                 <button
                   type="button"
                   className={`routine-toggle-btn ${showRoutineSettings ? "active" : ""}`}
                   onClick={() => setShowRoutineSettings((prev) => !prev)}
                   title="Configure focus sessions and break routine"
-                  style={{ padding: "7px 11px", fontSize: "12px" }}
+                  style={{ padding: "6px 11px", fontSize: "11.5px" }}
                 >
                   <SlidersHorizontal size={13} />
                   <span>Breaks:</span>
@@ -2521,87 +2626,50 @@ function App() {
                   onClick={() => generatePlan(false, "week")}
                   disabled={isPlanning || tasks.length === 0}
                   title="Make plan for this week"
-                  style={{ padding: "8px 14px", fontSize: "12.5px" }}
+                  style={{ padding: "7px 14px", fontSize: "12px" }}
                 >
                   <Sparkles size={14} className={isPlanning ? "loading-spinner" : ""} />
-                  {isPlanning ? "Planning..." : "Make my plan"}
+                  {isPlanning ? "Planning..." : "Make plan"}
                 </button>
               </div>
             </div>
 
-            {/* Weekly Summary Stats */}
-            <div className="week-summary-grid">
-              <div className="week-stat-card">
-                <div className="week-stat-header">
-                  <span className="week-stat-label">PLANNED EFFORT</span>
-                  <span className="week-stat-icon green">
-                    <Clock3 size={15} />
-                  </span>
-                </div>
-                <strong>
-                  {Math.floor(weekTotalMinutes / 60)}h{" "}
-                  {weekTotalMinutes % 60}m
-                </strong>
-                <span className="week-stat-sub">
-                  Across {weekTasks.length} tasks scheduled this week
+            {/* Minimal Weekly Summary Bar */}
+            <div className="week-minimal-stats-bar">
+              <div className="week-stat-pill">
+                <Clock3 size={13} className="stat-pill-icon green" />
+                <span className="stat-pill-value">
+                  {Math.floor(weekTotalMinutes / 60)}h {weekTotalMinutes % 60}m
                 </span>
+                <span className="stat-pill-label">planned</span>
               </div>
 
-              <div className="week-stat-card">
-                <div className="week-stat-header">
-                  <span className="week-stat-label">COMPLETED</span>
-                  <span className="week-stat-icon green">
-                    <CheckCircle2 size={15} />
-                  </span>
-                </div>
-                <strong>
-                  {weekCompletedCount} / {weekTasks.length}
-                </strong>
-                <div className="progress-track" style={{ marginTop: 8 }}>
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${
-                        weekTasks.length
-                          ? (weekCompletedCount / weekTasks.length) * 100
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="week-stat-card">
-                <div className="week-stat-header">
-                  <span className="week-stat-label">REMAINING</span>
-                  <span className="week-stat-icon peach">
-                    <Coffee size={15} />
-                  </span>
-                </div>
-                <strong>{weekRemainingCount} tasks</strong>
-                <span className="week-stat-sub">Paced steadily across the week</span>
-              </div>
-
-              <div
-                className={`week-stat-card ${
-                  weekOverdueCount > 0 ? "alert-card" : ""
-                }`}
-              >
-                <div className="week-stat-header">
-                  <span className="week-stat-label">OVERDUE</span>
-                  <span className="week-stat-icon lavender">
-                    <AlertTriangle size={15} />
-                  </span>
-                </div>
-                <strong className={weekOverdueCount > 0 ? "overdue-count" : ""}>
-                  {weekOverdueCount}
-                </strong>
-                <span className="week-stat-sub">
-                  {weekOverdueCount > 0
-                    ? "Review deadlines and adjust gently"
-                    : "All deadlines on track"}
+              <div className="week-stat-pill">
+                <CheckCircle2 size={13} className="stat-pill-icon green" />
+                <span className="stat-pill-value">
+                  {weekCompletedCount}/{weekTasks.length}
                 </span>
+                <span className="stat-pill-label">done</span>
               </div>
+
+              <div className="week-stat-pill">
+                <Coffee size={13} className="stat-pill-icon peach" />
+                <span className="stat-pill-value">{weekRemainingCount}</span>
+                <span className="stat-pill-label">remaining</span>
+              </div>
+
+              {weekOverdueCount > 0 ? (
+                <div className="week-stat-pill overdue">
+                  <AlertTriangle size={13} className="stat-pill-icon red" />
+                  <span className="stat-pill-value">{weekOverdueCount}</span>
+                  <span className="stat-pill-label">overdue</span>
+                </div>
+              ) : (
+                <div className="week-stat-pill calm">
+                  <Leaf size={13} className="stat-pill-icon green" />
+                  <span className="stat-pill-label">All deadlines on track</span>
+                </div>
+              )}
             </div>
 
             {/* 7-Day Calendar Grid (Monday to Sunday) */}
@@ -2647,8 +2715,8 @@ function App() {
                       </div>
 
                       <div className="col-tasks-list">
-                        {/* Protected routine blocks for this day */}
-                        {(() => {
+                        {/* Protected routine blocks for this day (only when explicitly toggled on) */}
+                        {showWeekRoutines && (() => {
                           const dayRoutines = (plan?.schedule || []).filter(
                             (s) =>
                               (s.type === "routine" || s.type === "blocked") &&
@@ -2696,7 +2764,10 @@ function App() {
                         })()}
 
                         {dayTasks.length === 0 ? (
-                          <div className="col-empty-msg">No tasks</div>
+                          <div className="col-empty-msg">
+                            <span className="empty-cal-dot">·</span>
+                            <span>Rest day</span>
+                          </div>
                         ) : (
                           dayTasks.map((task) => {
                             const overdue = isTaskOverdue(task);
@@ -2725,7 +2796,7 @@ function App() {
                                         : "Mark complete"
                                     }
                                   >
-                                    {task.done && <Check size={12} />}
+                                    {task.done && <Check size={11} />}
                                   </button>
                                   <h4 className="cal-task-title">
                                     {task.title}
@@ -2750,13 +2821,7 @@ function App() {
                                       return (
                                         <span
                                           className="cal-time-chip"
-                                          title={
-                                            plannedSessions.length > 1
-                                              ? `Scheduled across ${plannedSessions.length} parts: ${plannedSessions
-                                                  .map((s) => `${s.start}–${s.end}`)
-                                                  .join(", ")}`
-                                              : `Scheduled session time: ${plannedSessions[0].start} – ${plannedSessions[0].end}`
-                                          }
+                                          title={`Scheduled session time: ${timeRangeText}`}
                                         >
                                           <Clock3 size={10} /> {timeRangeText}
                                         </span>
@@ -2769,10 +2834,11 @@ function App() {
                                     );
                                   })()}
 
-                                  <span className="cal-category-tag">
-                                    {task.category?.replace("_", " ")}
-                                  </span>
-                                  {renderDurationBadge(task)}
+                                  {task.category && (
+                                    <span className="cal-category-tag">
+                                      {task.category.replace("_", " ")}
+                                    </span>
+                                  )}
 
                                   {task.deadline && (
                                     <span
@@ -2785,7 +2851,6 @@ function App() {
                                           : `Deadline: ${task.deadline}`
                                       }
                                     >
-                                      {overdue && <AlertTriangle size={9} />}
                                       Due {formatDisplayDeadline(task.deadline)}
                                     </span>
                                   )}
@@ -2795,6 +2860,7 @@ function App() {
                           })
                         )}
                       </div>
+
 
                       <button
                         type="button"
@@ -2958,87 +3024,42 @@ function App() {
               </div>
             </div>
 
-            {/* Monthly Summary Statistics */}
-            <div className="week-summary-grid">
-              <div className="week-stat-card">
-                <div className="week-stat-header">
-                  <span className="week-stat-label">PLANNED EFFORT</span>
-                  <span
-                    className="week-stat-icon"
-                    style={{ background: "#edf5eb", color: "#446c3d" }}
-                  >
-                    <Clock3 size={15} />
-                  </span>
-                </div>
-                <strong>
-                  {Math.floor(monthTotalMinutes / 60)}h{" "}
-                  {monthTotalMinutes % 60 > 0 ? `${monthTotalMinutes % 60}m` : ""}
-                </strong>
-                <span className="week-stat-sub">
-                  {monthTasks.length} {monthTasks.length === 1 ? "task" : "tasks"} planned this month
+            {/* Monthly Summary Statistics (Minimal) */}
+            <div className="week-minimal-stats-bar">
+              <div className="week-stat-pill">
+                <Clock3 size={13} className="stat-pill-icon green" />
+                <span className="stat-pill-value">
+                  {Math.floor(monthTotalMinutes / 60)}h {monthTotalMinutes % 60 > 0 ? `${monthTotalMinutes % 60}m` : ""}
                 </span>
+                <span className="stat-pill-label">planned</span>
               </div>
 
-              <div className="week-stat-card">
-                <div className="week-stat-header">
-                  <span className="week-stat-label">COMPLETED</span>
-                  <span
-                    className="week-stat-icon"
-                    style={{ background: "#e8f4ed", color: "#367a55" }}
-                  >
-                    <CheckCircle2 size={15} />
-                  </span>
-                </div>
-                <strong>{monthCompletedCount}</strong>
-                <span className="week-stat-sub">
-                  {monthTasks.length > 0
-                    ? `${Math.round((monthCompletedCount / monthTasks.length) * 100)}% completed`
-                    : "No tasks scheduled"}
+              <div className="week-stat-pill">
+                <CheckCircle2 size={13} className="stat-pill-icon green" />
+                <span className="stat-pill-value">
+                  {monthCompletedCount}/{monthTasks.length}
                 </span>
+                <span className="stat-pill-label">done</span>
               </div>
 
-              <div className="week-stat-card">
-                <div className="week-stat-header">
-                  <span className="week-stat-label">REMAINING</span>
-                  <span
-                    className="week-stat-icon"
-                    style={{ background: "#fbf3e6", color: "#9c6b24" }}
-                  >
-                    <Coffee size={15} />
-                  </span>
-                </div>
-                <strong>{monthRemainingCount}</strong>
-                <span className="week-stat-sub">Gentle progress ahead</span>
+              <div className="week-stat-pill">
+                <Coffee size={13} className="stat-pill-icon peach" />
+                <span className="stat-pill-value">{monthRemainingCount}</span>
+                <span className="stat-pill-label">remaining</span>
               </div>
 
-              <div
-                className={`week-stat-card ${
-                  monthOverdueCount > 0 ? "alert-card" : ""
-                }`}
-              >
-                <div className="week-stat-header">
-                  <span className="week-stat-label">OVERDUE</span>
-                  <span
-                    className="week-stat-icon"
-                    style={{
-                      background: monthOverdueCount > 0 ? "#fdeee9" : "#f5f6f3",
-                      color: monthOverdueCount > 0 ? "#ba4c3a" : "#8f9689",
-                    }}
-                  >
-                    <AlertTriangle size={15} />
-                  </span>
+              {monthOverdueCount > 0 ? (
+                <div className="week-stat-pill overdue">
+                  <AlertTriangle size={13} className="stat-pill-icon red" />
+                  <span className="stat-pill-value">{monthOverdueCount}</span>
+                  <span className="stat-pill-label">overdue</span>
                 </div>
-                <strong
-                  className={monthOverdueCount > 0 ? "overdue-count" : ""}
-                >
-                  {monthOverdueCount}
-                </strong>
-                <span className="week-stat-sub">
-                  {monthOverdueCount > 0
-                    ? "Requires gentle attention"
-                    : "All deadlines on track"}
-                </span>
-              </div>
+              ) : (
+                <div className="week-stat-pill calm">
+                  <Leaf size={13} className="stat-pill-icon green" />
+                  <span className="stat-pill-label">All deadlines on track</span>
+                </div>
+              )}
             </div>
 
             {/* Calendar Grid: Mon to Sun */}
