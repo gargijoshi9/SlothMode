@@ -604,9 +604,10 @@ export function createDailySchedule(tasks = [], options = {}) {
   const pendingTasks = tasks.filter((t) => !t.done);
 
   // 3. Classify pending tasks:
-  // - Future tasks outside this horizon: leave un-scheduled for now, do not move or overflow
-  // - Pinned tasks: task.scheduledDate is within horizonDays
-  // - Flexible tasks: unscheduled or past-due tasks that can be placed on an available horizon day
+  // - Tasks assigned to a date in horizonDays: pinned to that day
+  // - Tasks assigned to a date outside horizonDays: leave unscheduled on their original date
+  //   (NEVER migrate, roll forward, or schedule into this horizon)
+  // - Flexible tasks: tasks with NO assigned scheduledDate that can be placed on an available horizon day
   const pinnedByDay = {};
   for (const day of horizonDays) {
     pinnedByDay[day] = [];
@@ -615,16 +616,28 @@ export function createDailySchedule(tasks = [], options = {}) {
   const flexibleTasks = [];
 
   for (const task of pendingTasks) {
-    const sDate = task.scheduledDate ? task.scheduledDate.trim() : null;
-    if (sDate && sDate > lastHorizonDay) {
-      // Future task outside this horizon. Never schedule before its selected scheduledDate!
+    let sDate = null;
+    if (task.scheduledDate && typeof task.scheduledDate === 'string') {
+      const trimmed = task.scheduledDate.trim();
+      const match = trimmed.match(/^(\d{4}-\d{1,2}-\d{1,2})/);
+      if (match) {
+        const parsed = parseLocalDate(match[1]);
+        sDate = parsed ? toLocalDateString(parsed) : match[1];
+      } else {
+        sDate = trimmed;
+      }
+    }
+
+    if (sDate) {
+      if (horizonDays.includes(sDate)) {
+        pinnedByDay[sDate].push(task);
+      }
+      // If sDate is outside this horizon (past overdue or future), leave on its assigned calendar date.
+      // Never schedule, roll forward, or mutate its date.
       continue;
     }
-    if (sDate && horizonDays.includes(sDate)) {
-      pinnedByDay[sDate].push(task);
-    } else {
-      flexibleTasks.push(task);
-    }
+    // Only tasks with NO assigned scheduledDate are flexible tasks
+    flexibleTasks.push(task);
   }
 
   // Sort flexible tasks so urgent and tight-deadline tasks get assigned earlier in the horizon
@@ -990,9 +1003,10 @@ export function createDailySchedule(tasks = [], options = {}) {
   // Clean internal tracking fields (startMin, endMin)
   const cleanTimeline = allScheduleItems.map(({ startMin, endMin, ...item }) => item);
 
-  // Update enrichedTasks so scheduled tasks carry their assigned calendar date
+  // Update enrichedTasks: strictly preserve every task's scheduledDate!
+  // Only assign a scheduledDate to a flexible task that had NO scheduled date originally.
   const finalEnrichedTasks = tasks.map((t) => {
-    if (newlyScheduledTaskDates.has(t.id)) {
+    if (!t.scheduledDate && newlyScheduledTaskDates.has(t.id)) {
       return {
         ...t,
         scheduledDate: newlyScheduledTaskDates.get(t.id),

@@ -27,6 +27,7 @@ import "./App.css";
 import type {
   Task,
   PlanResponse,
+  ScheduleItem,
   HealthStatus,
   TaskCategory,
   PlanningHorizon,
@@ -275,8 +276,26 @@ function renderDurationBadge(task: Task, onReestimate?: () => void) {
 }
 
 function App() {
-  // Navigation tab: 'day' | 'week' | 'month'
-  const [activeTab, setActiveTab] = useState<"day" | "week" | "month">("day");
+  // Navigation tab: 'day' | 'week' | 'month', persisted across reloads
+  const [activeTab, setActiveTab] = useState<"day" | "week" | "month">(() => {
+    try {
+      const saved = localStorage.getItem("slothmode_active_tab");
+      if (saved && ["day", "week", "month"].includes(saved)) {
+        return saved as "day" | "week" | "month";
+      }
+    } catch {
+      // ignore
+    }
+    return "day";
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("slothmode_active_tab", activeTab);
+    } catch (e) {
+      console.warn("Failed to persist active tab:", e);
+    }
+  }, [activeTab]);
 
   // Load tasks from localStorage or initial state, safely handling legacy data
   const [tasks, setTasks] = useState<Task[]>(() => {
@@ -503,10 +522,38 @@ function App() {
 
   const [showRoutineSettings, setShowRoutineSettings] = useState(false);
 
-  // Selected date for viewing timeline in Day view
+  // Selected date for viewing timeline in Day view, persisted across reloads
   const [selectedTimelineDate, setSelectedTimelineDate] = useState<string>(() => {
+    try {
+      const savedDate = localStorage.getItem("slothmode_selected_timeline_date");
+      if (savedDate && /^\d{4}-\d{1,2}-\d{1,2}$/.test(savedDate.trim())) {
+        return savedDate.trim();
+      }
+      const savedPlan = localStorage.getItem("slothmode_plan");
+      if (savedPlan) {
+        const parsed = JSON.parse(savedPlan);
+        const firstTaskSession = parsed.schedule?.find((s: ScheduleItem) => s.type === "task");
+        if (firstTaskSession?.date || firstTaskSession?.scheduledDate) {
+          return firstTaskSession.date || firstTaskSession.scheduledDate;
+        }
+        if (parsed.startDate) return parsed.startDate;
+      }
+    } catch {
+      // ignore
+    }
     return getTodayDateString();
   });
+
+  // Persist selectedTimelineDate in localStorage
+  useEffect(() => {
+    try {
+      if (selectedTimelineDate) {
+        localStorage.setItem("slothmode_selected_timeline_date", selectedTimelineDate);
+      }
+    } catch (e) {
+      console.warn("Failed to persist selected timeline date:", e);
+    }
+  }, [selectedTimelineDate]);
 
   // Persist tasks in localStorage
   useEffect(() => {
@@ -1107,27 +1154,44 @@ function App() {
 
       setPlan(planData);
 
-      // Focus timeline on the relevant date
+      // Focus timeline on the relevant date and persist to localStorage
+      let nextSelectedDate = selectedTimelineDate;
       if (targetHorizon === "tomorrow") {
-        setSelectedTimelineDate(getTomorrowDateString());
+        nextSelectedDate = getTomorrowDateString();
       } else if (targetHorizon === "today") {
-        setSelectedTimelineDate(getTodayDateString());
+        nextSelectedDate = getTodayDateString();
       } else if (planData.schedule && planData.schedule.length > 0) {
-        // If current selected timeline date already has scheduled focus sessions, retain it;
-        // otherwise, switch to the first date with scheduled focus tasks
         const hasTasksOnSelected = planData.schedule.some(
           (s) => s.type === "task" && (s.date || s.scheduledDate) === selectedTimelineDate
         );
         if (!hasTasksOnSelected) {
           const firstTaskSession = planData.schedule.find((s) => s.type === "task");
-          const targetDate = firstTaskSession?.date || planData.startDate || getTodayDateString();
-          setSelectedTimelineDate(targetDate);
+          nextSelectedDate = firstTaskSession?.date || planData.startDate || getTodayDateString();
         }
       }
+      setSelectedTimelineDate(nextSelectedDate);
+      try {
+        localStorage.setItem("slothmode_selected_timeline_date", nextSelectedDate);
+      } catch {
+        // ignore
+      }
 
-      // Update tasks with AI enriched attributes & newly assigned scheduled dates
+      // Update tasks with AI enriched attributes while strictly preserving each task's scheduledDate
       if (Array.isArray(planData.enrichedTasks)) {
-        setTasks(planData.enrichedTasks);
+        setTasks((prevTasks) => {
+          const enrichedMap = new Map(
+            planData.enrichedTasks.map((t) => [t.id, t])
+          );
+          return prevTasks.map((prevTask) => {
+            const enriched = enrichedMap.get(prevTask.id);
+            if (!enriched) return prevTask;
+            return {
+              ...enriched,
+              // Strictly preserve the user's intended calendar date; replanning never mutates scheduledDate
+              scheduledDate: prevTask.scheduledDate || enriched.scheduledDate || null,
+            };
+          });
+        });
       }
 
       const scheduledFocusCount = (planData.schedule || []).filter((s) => s.type === "task").length;
@@ -1534,9 +1598,13 @@ function App() {
 
             {/* Schedule Timeline Section (Shown once plan is created) */}
             {plan && (() => {
-              const scheduleDates = plan.schedule
-                .map((i) => i.date || i.scheduledDate)
-                .filter(Boolean) as string[];
+              const scheduleDates = Array.from(
+                new Set(
+                  plan.schedule
+                    .map((i) => i.date || i.scheduledDate)
+                    .filter(Boolean) as string[]
+                )
+              ).sort();
               const rangeDates =
                 plan.startDate && plan.endDate
                   ? getDatesInRange(plan.startDate, plan.endDate)
@@ -1550,10 +1618,25 @@ function App() {
                 ].filter(Boolean))
               ).sort();
 
-              const activeTimelineDate =
-                selectedTimelineDate && allDates.includes(selectedTimelineDate)
-                  ? selectedTimelineDate
-                  : allDates[0] || getTodayDateString();
+              // Auto-recover active timeline date so schedule is NEVER hidden under an empty date on reload
+              let activeTimelineDate = selectedTimelineDate;
+              const hasItemsOnSelected = plan.schedule.some(
+                (item) => (item.date || item.scheduledDate) === selectedTimelineDate
+              );
+              if (!hasItemsOnSelected) {
+                const dateWithTasks = scheduleDates.find((d) =>
+                  plan.schedule.some(
+                    (s) => s.type === "task" && (s.date || s.scheduledDate) === d
+                  )
+                );
+                if (dateWithTasks) {
+                  activeTimelineDate = dateWithTasks;
+                } else if (scheduleDates.length > 0) {
+                  activeTimelineDate = scheduleDates[0];
+                } else {
+                  activeTimelineDate = getTodayDateString();
+                }
+              }
 
               const displayedScheduleItems = plan.schedule.filter(
                 (item) =>
@@ -2116,6 +2199,44 @@ function App() {
                 </div>
               )}
 
+              {/* Overdue Tasks Notice */}
+              {tasks.some((t) => isTaskOverdue(t) && !t.done) && (
+                <div className="overdue-banner">
+                  <div className="overdue-banner-text">
+                    <AlertCircle size={15} />
+                    <span>
+                      You have{" "}
+                      <strong>
+                        {tasks.filter((t) => isTaskOverdue(t) && !t.done).length}
+                      </strong>{" "}
+                      overdue unfinished task(s) from previous days.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="reschedule-all-btn"
+                    onClick={() => {
+                      const today = getTodayDateString();
+                      setTasks((prev) =>
+                        prev.map((t) =>
+                          isTaskOverdue(t) && !t.done
+                            ? { ...t, scheduledDate: today }
+                            : t
+                        )
+                      );
+                      setPlanFeedback({
+                        type: "success",
+                        message:
+                          "Rescheduled overdue tasks to Today! Click 'Make my plan' to include them in your schedule.",
+                      });
+                    }}
+                    title="Reschedule all overdue tasks to Today"
+                  >
+                    Reschedule All to Today
+                  </button>
+                </div>
+              )}
+
               <div className="task-list">
                 {tasks.length === 0 ? (
                   <div className="empty-state">
@@ -2184,12 +2305,32 @@ function App() {
                                 <>
                                   <span className="meta-dot">·</span>
                                   <span
-                                    className="task-schedule-badge"
-                                    title="Date you plan to work on this task"
+                                    className={`task-schedule-badge ${
+                                      isTaskOverdue(task) ? "is-overdue" : ""
+                                    }`}
+                                    title={
+                                      isTaskOverdue(task)
+                                        ? "This task is past its scheduled date or deadline"
+                                        : "Date you plan to work on this task"
+                                    }
                                   >
                                     <Calendar size={13} /> Plan:{" "}
                                     {formatDisplayDate(task.scheduledDate)}
+                                    {isTaskOverdue(task) && " (Overdue)"}
                                   </span>
+                                  {isTaskOverdue(task) && !task.done && (
+                                    <button
+                                      type="button"
+                                      className="reschedule-overdue-btn"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        scheduleTaskToDate(task.id, getTodayDateString());
+                                      }}
+                                      title="Explicitly reschedule this overdue task to Today"
+                                    >
+                                      Move to Today
+                                    </button>
+                                  )}
                                 </>
                               )}
                               {task.deadline && (

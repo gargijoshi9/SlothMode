@@ -20,6 +20,7 @@ import {
   getTomorrowDateString,
   compareCalendarDates,
   formatDisplayDate,
+  isTaskOverdue,
 } from './dateUtils.js';
 import { parseExplicitDuration } from './durationParser.js';
 
@@ -1066,9 +1067,106 @@ async function runTests() {
   assert(unreasonableResult.aiGenerated === false, 'Unreasonable 9999m estimate rejected');
   assert(unreasonableResult.estimatedMinutes <= 480, 'Fallback duration kept within safe student bounds');
 
+  // 28. Testing Planning Horizon Task Isolation, Date Immutability & Overdue Handling
+  console.log('\n--- 28. Testing Planning Horizon Task Isolation, Date Immutability & Overdue Handling ---');
+  const horizonTestTasks = [
+    { id: 2001, title: 'Write history thesis draft', scheduledDate: '2026-10-23', duration: 60, done: false },
+    { id: 2002, title: 'Prepare slide deck for Saturday workshop', scheduledDate: '2026-10-24', duration: 45, done: false },
+    { id: 2003, title: 'Read sociology chapter (from yesterday)', scheduledDate: '2026-10-22', duration: 30, done: false },
+    { id: 2004, title: 'Finished biology worksheet', scheduledDate: '2026-10-22', duration: 30, done: true },
+    { id: 2005, title: 'Next week term paper kickoff', scheduledDate: '2026-10-30', duration: 90, done: false },
+  ];
+
+  // 28a. Planning Horizon: Tomorrow
+  // Must ONLY schedule tasks whose scheduledDate is tomorrow (2026-10-24).
+  // Must NOT include, migrate, or mutate today's task (2001) or yesterday's task (2003).
+  const tomorrowHorizonPlan = createDailySchedule(horizonTestTasks, {
+    currentDate: '2026-10-23',
+    horizon: 'tomorrow',
+    startHour: 9,
+    endHour: 18,
+  });
+
+  assert(tomorrowHorizonPlan.horizon === 'tomorrow', 'Plan horizon is tomorrow');
+  assert(tomorrowHorizonPlan.startDate === '2026-10-24', 'Tomorrow plan starts on 2026-10-24');
+  assert(tomorrowHorizonPlan.schedule.some((s) => s.taskId === 2002), 'Tomorrow task 2002 is scheduled in tomorrow plan');
+  assert(!tomorrowHorizonPlan.schedule.some((s) => s.taskId === 2001), 'Today task 2001 is NOT scheduled into tomorrow plan');
+  assert(!tomorrowHorizonPlan.schedule.some((s) => s.taskId === 2003), 'Yesterday overdue task 2003 is NOT scheduled into tomorrow plan');
+  assert(!tomorrowHorizonPlan.schedule.some((s) => s.taskId === 2005), 'Future task 2005 is NOT scheduled into tomorrow plan');
+
+  // Verify scheduledDate immutability on enrichedTasks
+  const enriched2001Tomorrow = tomorrowHorizonPlan.enrichedTasks.find((t) => t.id === 2001);
+  const enriched2002Tomorrow = tomorrowHorizonPlan.enrichedTasks.find((t) => t.id === 2002);
+  const enriched2003Tomorrow = tomorrowHorizonPlan.enrichedTasks.find((t) => t.id === 2003);
+  const enriched2004Tomorrow = tomorrowHorizonPlan.enrichedTasks.find((t) => t.id === 2004);
+  assert(enriched2001Tomorrow?.scheduledDate === '2026-10-23', 'Task 2001 scheduledDate remains strictly 2026-10-23 after planning tomorrow');
+  assert(enriched2002Tomorrow?.scheduledDate === '2026-10-24', 'Task 2002 scheduledDate remains strictly 2026-10-24 after planning tomorrow');
+  assert(enriched2003Tomorrow?.scheduledDate === '2026-10-22', 'Task 2003 scheduledDate remains strictly 2026-10-22 after planning tomorrow');
+  assert(enriched2004Tomorrow?.scheduledDate === '2026-10-22' && enriched2004Tomorrow?.done === true, 'Completed task 2004 retains status and original date');
+
+  // 28b. Planning Horizon: Today
+  // Must ONLY schedule tasks whose scheduledDate is today (2026-10-23).
+  // Must NOT include tomorrow's task (2002) or silently roll forward yesterday's task (2003).
+  const todayHorizonPlan = createDailySchedule(horizonTestTasks, {
+    currentDate: '2026-10-23',
+    horizon: 'today',
+    startHour: 9,
+    endHour: 18,
+  });
+
+  assert(todayHorizonPlan.horizon === 'today', 'Plan horizon is today');
+  assert(todayHorizonPlan.startDate === '2026-10-23', 'Today plan starts on 2026-10-23');
+  assert(todayHorizonPlan.schedule.some((s) => s.taskId === 2001), 'Today task 2001 is scheduled in today plan');
+  assert(!todayHorizonPlan.schedule.some((s) => s.taskId === 2002), 'Tomorrow task 2002 is NOT scheduled in today plan');
+  assert(!todayHorizonPlan.schedule.some((s) => s.taskId === 2003), 'Overdue task 2003 is NOT silently rolled forward to today plan');
+  assert(!todayHorizonPlan.schedule.some((s) => s.taskId === 2005), 'Next week task 2005 is NOT scheduled in today plan');
+
+  const enriched2001Today = todayHorizonPlan.enrichedTasks.find((t) => t.id === 2001);
+  const enriched2003Today = todayHorizonPlan.enrichedTasks.find((t) => t.id === 2003);
+  assert(enriched2001Today?.scheduledDate === '2026-10-23', 'Task 2001 retains scheduledDate 2026-10-23');
+  assert(enriched2003Today?.scheduledDate === '2026-10-22', 'Overdue task 2003 retains original date 2026-10-22');
+
+  // 28c. Crossing midnight and overdue task detection
+  // Simulating midnight crossing to 2026-10-24:
+  const refMidnight = new Date(2026, 9, 24, 0, 1, 0); // 2026-10-24 00:01:00
+  const is2001OverdueAfterMidnight = isTaskOverdue(horizonTestTasks[0], refMidnight);
+  const is2003Overdue = isTaskOverdue(horizonTestTasks[2], refMidnight);
+  const is2004Overdue = isTaskOverdue(horizonTestTasks[3], refMidnight); // Completed task
+  const is2002Overdue = isTaskOverdue(horizonTestTasks[1], refMidnight); // Task on today 2026-10-24
+
+  assert(is2001OverdueAfterMidnight === true, 'Task from yesterday (2026-10-23) is flagged overdue after midnight on 2026-10-24');
+  assert(is2003Overdue === true, 'Task from 2 days ago (2026-10-22) is flagged overdue');
+  assert(is2004Overdue === false, 'Completed task is not overdue');
+  assert(is2002Overdue === false, 'Task scheduled for today is not overdue');
+
+  // Planning on 2026-10-24: yesterday unfinished task (2001) is NOT silently rolled forward to 2026-10-24
+  const planAfterMidnight = createDailySchedule(horizonTestTasks, {
+    currentDate: '2026-10-24',
+    horizon: 'today',
+    startHour: 9,
+    endHour: 18,
+  });
+  assert(planAfterMidnight.schedule.some((s) => s.taskId === 2002), 'Task 2002 (Oct 24) is scheduled on Oct 24');
+  assert(!planAfterMidnight.schedule.some((s) => s.taskId === 2001), 'Yesterday task 2001 is NOT silently rolled forward into today plan after midnight');
+  const enriched2001AfterMidnight = planAfterMidnight.enrichedTasks.find((t) => t.id === 2001);
+  assert(enriched2001AfterMidnight?.scheduledDate === '2026-10-23', 'Task 2001 retains original date 2026-10-23 after midnight replan');
+
+  // 28d. Horizon: This Week respects each task assigned date
+  const weekPlanIsolation = createDailySchedule(horizonTestTasks, {
+    currentDate: '2026-10-23',
+    horizon: 'week',
+    startHour: 9,
+    endHour: 18,
+  });
+  const session2001InWeek = weekPlanIsolation.schedule.find((s) => s.taskId === 2001);
+  const session2002InWeek = weekPlanIsolation.schedule.find((s) => s.taskId === 2002);
+  assert(session2001InWeek?.date === '2026-10-23', 'Task 2001 placed on its assigned Friday Oct 23 in week view');
+  assert(session2002InWeek?.date === '2026-10-24', 'Task 2002 placed on its assigned Saturday Oct 24 in week view');
+  assert(!weekPlanIsolation.schedule.some((s) => s.taskId === 2005), 'Next week task 2005 not scheduled in current week view');
+
   console.log(`\n================================`);
   if (failures === 0) {
-    console.log('🎉 ALL 27 TEST SUITES PASSED FLAWLESSLY!');
+    console.log('🎉 ALL 28 TEST SUITES PASSED FLAWLESSLY!');
   } else {
     console.error(`💥 ${failures} TEST(S) FAILED.`);
     process.exit(1);

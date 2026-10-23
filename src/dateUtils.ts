@@ -203,10 +203,25 @@ export function formatDisplayDeadline(
  * Check whether a task is overdue relative to refDate without UTC shifts.
  */
 export function isTaskOverdue(
-  task: { deadline?: string | null; done?: boolean },
+  task: { deadline?: string | null; scheduledDate?: string | null; done?: boolean },
   now: Date = new Date()
 ): boolean {
-  if (task.done || !task.deadline) return false;
+  if (!task || task.done) return false;
+  const todayStr = getTodayDateString(now);
+
+  // If task was scheduled for a calendar date before today and is unfinished, it is overdue
+  if (
+    task.scheduledDate &&
+    typeof task.scheduledDate === "string" &&
+    task.scheduledDate.trim()
+  ) {
+    const sDate = task.scheduledDate.trim();
+    if (sDate < todayStr) {
+      return true;
+    }
+  }
+
+  if (!task.deadline || typeof task.deadline !== "string") return false;
   const trimmed = task.deadline.trim();
 
   // Time-only HH:mm on current day

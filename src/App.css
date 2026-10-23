@@ -819,6 +819,69 @@ a {
   gap: 3px;
 }
 
+.task-schedule-badge.is-overdue {
+  color: #ba4c3a;
+  background: #fdeee9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.reschedule-overdue-btn {
+  background: #fdf5f0;
+  border: 1px solid #f3d4c7;
+  color: #ba4c3a;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-left: 4px;
+}
+
+.reschedule-overdue-btn:hover {
+  background: #ba4c3a;
+  color: #ffffff;
+  border-color: #ba4c3a;
+}
+
+.overdue-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff8f5;
+  border: 1px solid #f9ded5;
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #933827;
+}
+
+.overdue-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reschedule-all-btn {
+  background: #ba4c3a;
+  color: #ffffff;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.reschedule-all-btn:hover {
+  background: #a33b2a;
+}
+
 .schedule-deadline-tag {
   font-size: 10px;
   font-weight: 600;

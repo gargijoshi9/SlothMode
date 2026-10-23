@@ -122,3 +122,65 @@ export function formatDisplayDate(dateStr, refDate = new Date()) {
     day: 'numeric',
   });
 }
+
+/**
+ * Check whether a task is overdue relative to refDate without UTC shifts.
+ * An unfinished task is overdue if:
+ * 1. It has a scheduledDate strictly before today's local date.
+ * 2. Or it has a deadline that has passed.
+ */
+export function isTaskOverdue(task, now = new Date()) {
+  if (!task || task.done) return false;
+  const todayStr = getTodayDateString(now);
+
+  if (task.scheduledDate && typeof task.scheduledDate === 'string' && task.scheduledDate.trim()) {
+    const sDate = task.scheduledDate.trim();
+    if (sDate < todayStr) {
+      return true;
+    }
+  }
+
+  if (!task.deadline || typeof task.deadline !== 'string') return false;
+  const trimmed = task.deadline.trim();
+
+  // Time-only HH:mm on current day
+  if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
+    const [h, m] = trimmed.split(':').map(Number);
+    const d = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      h,
+      m,
+      0,
+      0
+    );
+    return d < now;
+  }
+
+  // Date-only deadline YYYY-MM-DD expires at the end of that day (23:59:59)
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed)) {
+    const parsed = parseLocalDate(trimmed);
+    if (!parsed) return false;
+    const endOfDay = new Date(
+      parsed.getFullYear(),
+      parsed.getMonth(),
+      parsed.getDate(),
+      23,
+      59,
+      59,
+      999
+    );
+    return endOfDay < now;
+  }
+
+  // Datetime-local YYYY-MM-DDTHH:mm
+  const parsed = parseLocalDate(trimmed);
+  if (parsed) {
+    return parsed < now;
+  }
+
+  const d = new Date(trimmed);
+  if (isNaN(d.getTime())) return false;
+  return d < now;
+}
