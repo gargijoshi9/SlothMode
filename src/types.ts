@@ -223,4 +223,64 @@ export type HealthStatus = {
   };
 };
 
+export type OccupationType =
+  | 'college'
+  | 'school'
+  | 'work_full'
+  | 'work_part'
+  | 'freelance'
+  | 'mixed'
+  | 'other'
+  | 'changing';
+
+export type FreeTimePredictability =
+  | 'mostly_same'
+  | 'weekday_weekend'
+  | 'changes_daily'
+  | 'adapt';
+
+export interface UserProfile {
+  name?: string;
+  occupation: OccupationType;
+  sleepHours: number;
+  wakeUpTime: string;
+  hasCommitment: boolean;
+  commitmentLabel?: string;
+  commitmentStartTime?: string;
+  commitmentEndTime?: string;
+  commitmentDays?: string[];
+  lunchOption: 'fixed' | 'changing' | 'none';
+  lunchStartTime?: string;
+  lunchEndTime?: string;
+  dinnerOption: 'fixed' | 'changing' | 'none';
+  dinnerStartTime?: string;
+  dinnerEndTime?: string;
+  windDownTime: string;
+  predictability: FreeTimePredictability;
+  keepNap?: boolean;
+  keepSnack?: boolean;
+}
+
+export const DEFAULT_USER_PROFILE: UserProfile = {
+  name: '',
+  occupation: 'college',
+  sleepHours: 8,
+  wakeUpTime: '08:00',
+  hasCommitment: false,
+  commitmentLabel: 'College / Classes',
+  commitmentStartTime: '10:00',
+  commitmentEndTime: '16:00',
+  commitmentDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+  lunchOption: 'fixed',
+  lunchStartTime: '13:00',
+  lunchEndTime: '14:00',
+  dinnerOption: 'fixed',
+  dinnerStartTime: '19:00',
+  dinnerEndTime: '19:30',
+  windDownTime: '21:00',
+  predictability: 'changes_daily',
+  keepNap: true,
+  keepSnack: true,
+};
+
 

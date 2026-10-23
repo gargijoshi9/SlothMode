@@ -26,9 +26,6 @@ import {
   Play,
   Pause,
   RotateCcw,
-  HelpCircle,
-  ArrowRight,
-  ArrowLeft,
 } from "lucide-react";
 import "./App.css";
 import type {
@@ -45,8 +42,10 @@ import type {
   RoutineSettings,
   RoutineBlock,
   ActiveFocusState,
+  UserProfile,
 } from "./types";
-import { DEFAULT_ROUTINE_BLOCKS, DEFAULT_ROUTINE_SETTINGS } from "./types";
+import { DEFAULT_ROUTINE_BLOCKS, DEFAULT_ROUTINE_SETTINGS, DEFAULT_USER_PROFILE } from "./types";
+import { PersonalizedOnboardingModal } from "./PersonalizedOnboardingModal";
 import {
   getTodayDateString,
   getTomorrowDateString,
@@ -443,6 +442,31 @@ function App() {
   const [stuckSubtaskInput, setStuckSubtaskInput] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // User profile state from personalized onboarding
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
+    try {
+      const saved = localStorage.getItem("slothmode_user_profile");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") {
+          return { ...DEFAULT_USER_PROFILE, ...parsed };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return DEFAULT_USER_PROFILE;
+  });
+
+  // Persist userProfile in localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("slothmode_user_profile", JSON.stringify(userProfile));
+    } catch (e) {
+      console.warn("Failed to persist user profile:", e);
+    }
+  }, [userProfile]);
+
   // First-launch onboarding state
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     try {
@@ -452,15 +476,26 @@ function App() {
       return false;
     }
   });
-  const [onboardingStep, setOnboardingStep] = useState<number>(1);
 
   const dismissOnboarding = () => {
     setShowOnboarding(false);
-    setOnboardingStep(1);
     try {
       localStorage.setItem("slothmode_onboarding_completed", "true");
     } catch {
       // ignore
+    }
+  };
+
+  const handleSaveOnboarding = (newProfile: UserProfile, newRoutine: RoutineSettings) => {
+    setUserProfile(newProfile);
+    setRoutineSettings(newRoutine);
+    setShowOnboarding(false);
+    try {
+      localStorage.setItem("slothmode_onboarding_completed", "true");
+      localStorage.setItem("slothmode_user_profile", JSON.stringify(newProfile));
+      localStorage.setItem("slothmode_routine_settings_v1", JSON.stringify(newRoutine));
+    } catch (e) {
+      console.warn("Failed to save onboarding settings:", e);
     }
   };
 
@@ -558,7 +593,7 @@ function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && typeof parsed === "object") {
-          const blocks = DEFAULT_ROUTINE_BLOCKS.map((defBlock) => {
+          const defaultMapped = DEFAULT_ROUTINE_BLOCKS.map((defBlock) => {
             const userBlock = (parsed.blocks || []).find((b: Partial<RoutineBlock>) => b && b.id === defBlock.id);
             if (userBlock) {
               return {
@@ -570,10 +605,21 @@ function App() {
             }
             return defBlock;
           });
+          const customBlocks = (parsed.blocks || [])
+            .filter((b: Partial<RoutineBlock>) => b && !DEFAULT_ROUTINE_BLOCKS.some((def) => def.id === b.id))
+            .map((b: RoutineBlock) => ({
+              id: b.id,
+              label: b.label || "Commitment",
+              icon: b.icon || "📌",
+              enabled: typeof b.enabled === "boolean" ? b.enabled : true,
+              startTime: b.startTime || "10:00",
+              durationMinutes: Number(b.durationMinutes) || 60,
+            }));
+
           return {
             dayStartTime: parsed.dayStartTime || DEFAULT_ROUTINE_SETTINGS.dayStartTime,
             dayEndTime: parsed.dayEndTime || DEFAULT_ROUTINE_SETTINGS.dayEndTime,
-            blocks,
+            blocks: [...defaultMapped, ...customBlocks],
           };
         }
       }
@@ -659,6 +705,13 @@ function App() {
     setRoutineSettings((prev) => ({
       ...prev,
       blocks: prev.blocks.map((b) => (b.id === id ? { ...b, ...updates } : b)),
+    }));
+  };
+
+  const removeRoutineBlock = (id: string) => {
+    setRoutineSettings((prev) => ({
+      ...prev,
+      blocks: prev.blocks.filter((b) => b.id !== id),
     }));
   };
 
@@ -1762,6 +1815,14 @@ function App() {
               </div>
               <button
                 type="button"
+                className="routine-personalize-btn"
+                onClick={() => setShowOnboarding(true)}
+                title="Launch personalized routine setup wizard"
+              >
+                <Sparkles size={13} /> Personalize routine
+              </button>
+              <button
+                type="button"
                 className="routine-reset-btn"
                 onClick={resetRoutineSettings}
                 title="Reset routine times and blocks to default"
@@ -1774,6 +1835,7 @@ function App() {
           <div className="routine-blocks-list">
             {routineSettings.blocks.map((block) => {
               const timeSpan = formatBlockSpan(block.startTime, block.durationMinutes);
+              const isCustomBlock = !DEFAULT_ROUTINE_BLOCKS.some((def) => def.id === block.id);
               return (
                 <div
                   key={block.id}
@@ -1822,7 +1884,7 @@ function App() {
                       <input
                         type="number"
                         min="5"
-                        max="240"
+                        max="360"
                         step="5"
                         className="routine-duration-input"
                         value={block.durationMinutes}
@@ -1836,6 +1898,17 @@ function App() {
                       />
                       <span>min</span>
                     </div>
+                    {isCustomBlock && (
+                      <button
+                        type="button"
+                        className="routine-delete-block-btn"
+                        onClick={() => removeRoutineBlock(block.id)}
+                        title={`Remove ${block.label}`}
+                        aria-label={`Remove ${block.label}`}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -1847,13 +1920,10 @@ function App() {
           <button
             type="button"
             className="routine-guide-reopen-btn"
-            onClick={() => {
-              setOnboardingStep(1);
-              setShowOnboarding(true);
-            }}
-            title="Revisit the welcoming 3-step SlothMode guide"
+            onClick={() => setShowOnboarding(true)}
+            title="Revisit personalized routine onboarding setup"
           >
-            <Sparkles size={13} /> Revisit welcome guide
+            <Sparkles size={13} /> Personalize daily routine & commitments
           </button>
         </div>
       </div>
@@ -1909,13 +1979,10 @@ function App() {
         <button
           type="button"
           className="nav-item"
-          onClick={() => {
-            setOnboardingStep(1);
-            setShowOnboarding(true);
-          }}
-          title="Open the welcoming 3-step SlothMode guide"
+          onClick={() => setShowOnboarding(true)}
+          title="Personalize your daily routine and pace"
         >
-          <HelpCircle size={18} /> Welcome guide
+          <Sparkles size={18} /> Routine guide
         </button>
 
         <div className="sidebar-bottom">
@@ -1932,7 +1999,11 @@ function App() {
 
       <section className="main-content" id="today">
         <header className="topbar">
-          <span className="date-label">YOUR SPACE, YOUR PACE</span>
+          <span className="date-label">
+            {userProfile.name
+              ? `WELCOME, ${userProfile.name.toUpperCase()} · YOUR SPACE, YOUR PACE`
+              : "YOUR SPACE, YOUR PACE"}
+          </span>
 
           {/* View switcher in topbar */}
           <div className="view-switch-pills">
@@ -1980,14 +2051,11 @@ function App() {
           <button
             type="button"
             className="topbar-guide-btn"
-            onClick={() => {
-              setOnboardingStep(1);
-              setShowOnboarding(true);
-            }}
-            title="Reopen SlothMode welcome guide"
-            aria-label="Reopen welcome guide"
+            onClick={() => setShowOnboarding(true)}
+            title="Personalize routine & onboarding guide"
+            aria-label="Personalize routine & onboarding guide"
           >
-            <HelpCircle size={13} /> Guide
+            <Sparkles size={13} /> Routine guide
           </button>
         </header>
 
@@ -4643,132 +4711,16 @@ function App() {
           );
         })()}
 
-        {/* First-Launch Onboarding Guide */}
-        {showOnboarding && (
-          <div
-            className="onboarding-backdrop"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Welcome to SlothMode Guide"
-          >
-            <div className="onboarding-card">
-              <div className="onboarding-header">
-                <div className="onboarding-step-indicator">
-                  <span className={`step-dot ${onboardingStep === 1 ? "active" : ""}`} />
-                  <span className={`step-dot ${onboardingStep === 2 ? "active" : ""}`} />
-                  <span className={`step-dot ${onboardingStep === 3 ? "active" : ""}`} />
-                  <span className="step-count">Step {onboardingStep} of 3</span>
-                </div>
-                <button
-                  type="button"
-                  className="onboarding-skip-btn"
-                  onClick={dismissOnboarding}
-                  aria-label="Skip onboarding guide"
-                >
-                  Skip
-                </button>
-              </div>
-
-              {/* Step 1: Brain Dump */}
-              {onboardingStep === 1 && (
-                <div className="onboarding-content">
-                  <div className="onboarding-icon-wrap green">
-                    <Brain size={30} />
-                  </div>
-                  <h2>1. Brain dump: get it off your mind</h2>
-                  <p className="onboarding-desc">
-                    When studies or chores feel overwhelming, don't try to organize everything in your head.
-                    Just dump any task, assignment, or reminder into the brain dump input in natural words — like{" "}
-                    <em>"Study OS practical for 2 hours"</em>.
-                  </p>
-                  <div className="onboarding-pill-callout">
-                    <span>🌱</span>
-                    <span>No pressure. No rigid forms. Start with one small thing.</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Step 2: AI Assistance & Fallbacks */}
-              {onboardingStep === 2 && (
-                <div className="onboarding-content">
-                  <div className="onboarding-icon-wrap lavender">
-                    <Sparkles size={30} />
-                  </div>
-                  <h2>2. Local AI & gentle fallbacks</h2>
-                  <p className="onboarding-desc">
-                    SlothMode connects to your local <strong>Ollama (Gemma 3 1B)</strong> model to estimate task
-                    duration, categorize study topics, and break large assignments into bite-sized steps.
-                  </p>
-                  <div className="onboarding-ai-status-note">
-                    <div className="ai-status-note-row">
-                      <span className={`ai-dot ${isAiOnline ? "online" : "fallback"}`} />
-                      <span>
-                        {isAiOnline
-                          ? `Local Ollama is ready (${health?.ollama.configuredModel})`
-                          : "Ollama not running? Gentle fallback heuristics take over automatically"}
-                      </span>
-                    </div>
-                    <small>
-                      AI availability depends on your local Ollama setup. If Ollama is offline, SlothMode runs seamlessly using deterministic rules.
-                    </small>
-                  </div>
-                </div>
-              )}
-
-              {/* Step 3: Gentle Planning & Focus Sessions */}
-              {onboardingStep === 3 && (
-                <div className="onboarding-content">
-                  <div className="onboarding-icon-wrap peach">
-                    <Coffee size={30} />
-                  </div>
-                  <h2>3. Gentle planning & focus sessions</h2>
-                  <p className="onboarding-desc">
-                    Click <strong>"Make my plan"</strong> to generate a calm day or week timeline with protected
-                    routines (lunch, nap, dinner). When you're ready, click <strong>"Focus"</strong> to enter
-                    distraction-reduced Focus Mode with pause, micro-steps, and an <em>"I'm stuck"</em> breather.
-                  </p>
-                  <div className="onboarding-pill-callout">
-                    <span>🦥</span>
-                    <span>A timer reaching zero never marks tasks done without your confirmation. Rest is productive too.</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Onboarding Footer Actions */}
-              <div className="onboarding-actions">
-                {onboardingStep > 1 ? (
-                  <button
-                    type="button"
-                    className="onboarding-back-btn"
-                    onClick={() => setOnboardingStep((s) => s - 1)}
-                  >
-                    <ArrowLeft size={15} /> Back
-                  </button>
-                ) : (
-                  <div />
-                )}
-
-                {onboardingStep < 3 ? (
-                  <button
-                    type="button"
-                    className="onboarding-next-btn"
-                    onClick={() => setOnboardingStep((s) => s + 1)}
-                  >
-                    Next <ArrowRight size={15} />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="onboarding-start-btn"
-                    onClick={dismissOnboarding}
-                  >
-                    Let's start 🦥
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Personalized Routine Onboarding Wizard */}
+        <PersonalizedOnboardingModal
+          isOpen={showOnboarding}
+          initialProfile={userProfile}
+          existingRoutine={routineSettings}
+          onSave={handleSaveOnboarding}
+          onSkip={dismissOnboarding}
+          onClose={dismissOnboarding}
+          isRevisiting={localStorage.getItem("slothmode_onboarding_completed") === "true"}
+        />
 
         <footer className="footer">
           <Moon size={15} /> You are a human being, not a productivity machine.
