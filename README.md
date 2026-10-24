@@ -21,12 +21,8 @@ Traditional productivity apps often create an exhausting paradox: **planning tak
 
 > *"Less overwhelm. Smaller steps. A gentler way to get things done."*
 
-https://github.com/user-attachments/assets/brag.mp4
-
-https://user-images.githubusercontent.com/brag.mp4
-
-<video src="brag.mp4" controls="controls" width="100%" poster="docs/screenshots/dashboard.png">
-  Your browser does not support the video tag. You can view the launch video directly: <a href="brag.mp4">brag.mp4</a>
+<video src="SlothMode.mp4" controls="controls" width="100%" poster="docs/screenshots/dashboard.png">
+  Your browser does not support the video tag. You can view the launch video directly: <a href="SlothMode.mp4">SlothMode.mp4</a>
 </video>
 
 *Watch the 34-second cinematic tour of SlothMode showcasing personalized routine onboarding, local Gemma 3 1B task estimation, and deterministic zero-overlap scheduling with mindful breaks.*
