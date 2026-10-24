@@ -19,32 +19,30 @@ Traditional productivity apps often create an exhausting paradox: **planning tak
 
 ## Screenshots
 
-<!--
-  Working note on screenshot assets:
-  The repository contains raw timestamped captures in `docs/screenshots/`.
-  The canonical filenames below are reserved for curated documentation captures.
-  Placeholders are retained below where specific standardized captures are not yet mapped.
--->
+### 1. Calm Dashboard & Gentle Timeline
+A minimalist, distraction-reduced workspace showing your scheduled focus sessions, restorative breaks, and live AI connectivity status.
 
-### Dashboard & Focus Flow
-<!-- Canonical: docs/screenshots/dashboard.png -->
-*(Screenshot pending: `docs/screenshots/dashboard.png`)*
+![SlothMode Dashboard and Gentle Timeline](docs/screenshots/dashboard.png)
 
-### Personalized Onboarding
-<!-- Canonical: docs/screenshots/onboarding.png -->
-*(Screenshot pending: `docs/screenshots/onboarding.png`)*
+### 2. Personalized Onboarding & Routine Setup
+Learn your daily routine (wake-up times, college/work commitments, meal hours, and sleep needs) to configure deterministic scheduling.
 
-### Daily Schedule & Routine Blocks
-<!-- Canonical: docs/screenshots/personalized-schedule.png -->
-*(Screenshot pending: `docs/screenshots/personalized-schedule.png`)*
+![Personalized Onboarding Flow](docs/screenshots/onboarding-2.png)
 
-### Actionable Subtask Breakdown
-<!-- Canonical: docs/screenshots/task-breakdown.png -->
-*(Screenshot pending: `docs/screenshots/task-breakdown.png`)*
+### 3. Balanced Daily Schedule with Protected Routine Blocks
+Task sessions, mindful breaks, and protected daily commitments (e.g. classes, lunch, and dinner) scheduled with zero overlaps.
 
-### Multi-Horizon Planning Views
-<!-- Canonical: docs/screenshots/planning-views.png -->
-*(Screenshot pending: `docs/screenshots/planning-views.png`)*
+![Personalized Daily Schedule](docs/screenshots/personalized-schedule.png)
+
+### 4. AI-Powered Task Breakdown & Provenance Badges
+Tasks enriched by local Gemma 3 1B with category tagging, urgency, transparent duration badges, and actionable subtasks.
+
+![Actionable Subtask Breakdown](docs/screenshots/task-breakdown.png)
+
+### 5. Multi-Horizon Week Planning
+Switch between Today, Tomorrow, and the calendar-aligned Monday–Sunday Week view to balance your academic workload.
+
+![This Week Planning View](docs/screenshots/week-view.png)
 
 ---
 
