@@ -10,6 +10,8 @@ import {
   validateRoutineSettings,
   evaluateDeadlineForDate,
   parseDeadlineToMinutes,
+  mapProfileToRoutineSettings,
+  calcSuggestedBedtime,
 } from './scheduler.js';
 import {
   formatLocalDate,
@@ -1164,9 +1166,221 @@ async function runTests() {
   assert(session2002InWeek?.date === '2026-10-24', 'Task 2002 placed on its assigned Saturday Oct 24 in week view');
   assert(!weekPlanIsolation.schedule.some((s) => s.taskId === 2005), 'Next week task 2005 not scheduled in current week view');
 
+  // ==========================================
+  // 29. Personalized Onboarding & Deterministic Routine Mapping
+  // ==========================================
+  console.log('\n--- 29. Testing Personalized Onboarding & Deterministic Routine Mapping ---');
+
+  // 29a. Bedtime & Sleep Duration Calculation
+  assert(calcSuggestedBedtime('07:00', 7) === '00:00', '7h sleep from 07:00 wake-up suggests 00:00 bedtime');
+  assert(calcSuggestedBedtime('07:00', 8) === '23:00', '8h sleep from 07:00 wake-up suggests 23:00 bedtime');
+  assert(calcSuggestedBedtime('06:30', 8) === '22:30', '8h sleep from 06:30 wake-up suggests 22:30 bedtime');
+  assert(calcSuggestedBedtime('08:00', 9) === '23:00', '9h sleep from 08:00 wake-up suggests 23:00 bedtime');
+
+  // 29b. Requirement 6 Example Scenario: Gargi (College Student)
+  const gargiProfile = {
+    name: 'Gargi',
+    occupation: 'college',
+    sleepHours: 7,
+    wakeUpTime: '07:00',
+    lunchOption: 'fixed',
+    lunchStartTime: '12:00',
+    lunchEndTime: '13:00',
+    hasCommitment: true,
+    commitmentLabel: 'College / Classes',
+    commitmentStartTime: '10:00',
+    commitmentEndTime: '16:00',
+    commitmentDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+    freeTimePredictability: 'changes_daily',
+    dinnerOption: 'fixed',
+    dinnerStartTime: '20:00',
+    dinnerEndTime: '21:00',
+    windDownTime: '22:00',
+    keepNap: false,
+    keepSnack: false,
+  };
+
+  const gargiRoutine = mapProfileToRoutineSettings(gargiProfile);
+  assert(gargiRoutine.dayStartTime === '07:00', 'Gargi day starts at 07:00 from wake-up preference');
+  assert(gargiRoutine.dayEndTime === '22:00', 'Gargi day ends at 22:00 from wind-down preference');
+
+  const gargiValidation = validateRoutineSettings(gargiRoutine);
+  assert(gargiValidation.isValid === true, 'Gargi mapped routine passes scheduler validation with 0 errors');
+  assert(gargiValidation.errors.length === 0, 'No overlapping routine errors in Gargi routine');
+
+  // Verify routine blocks structure:
+  // College 10:00–16:00 enclosing Lunch 12:00–13:00 must be cleanly split around lunch
+  const morningClass = gargiRoutine.blocks.find((b) => b.id === 'commitment_morning');
+  const lunchBlock = gargiRoutine.blocks.find((b) => b.id === 'lunch');
+  const afternoonClass = gargiRoutine.blocks.find((b) => b.id === 'commitment_afternoon');
+  const dinnerBlock = gargiRoutine.blocks.find((b) => b.id === 'dinner');
+
+  assert(morningClass && morningClass.startTime === '10:00' && morningClass.durationMinutes === 120, 'Morning college block is 10:00–12:00 (120m)');
+  assert(lunchBlock && lunchBlock.startTime === '12:00' && lunchBlock.durationMinutes === 60, 'Lunch block is 12:00–13:00 (60m)');
+  assert(afternoonClass && afternoonClass.startTime === '13:00' && afternoonClass.durationMinutes === 180, 'Afternoon college block is 13:00–16:00 (180m)');
+  assert(dinnerBlock && dinnerBlock.startTime === '20:00' && dinnerBlock.durationMinutes === 60, 'Dinner block is 20:00–21:00 (60m)');
+
+  // 29c. Deterministic Schedule Execution with Gargi's Routine
+  const gargiTasks = [
+    { id: 3001, title: 'Operating Systems Lab Reading', estimatedMinutes: 90, status: 'todo' },
+    { id: 3002, title: 'Algorithm Practice', estimatedMinutes: 120, status: 'todo' },
+    { id: 3003, title: 'Evening Review', estimatedMinutes: 60, status: 'todo' },
+  ];
+
+  const gargiPlan = createDailySchedule(gargiTasks, {
+    currentDate: '2026-10-23',
+    horizon: 'today',
+    routineSettings: gargiRoutine,
+  });
+
+  assert(gargiPlan.success === true, 'Scheduler successfully plans day with Gargi personalized routine');
+
+  // Verify first task starts at wake-up time 07:00
+  const gargiFirstSession = gargiPlan.schedule.find((s) => s.type === 'task');
+  assert(gargiFirstSession && gargiFirstSession.start === '07:00', `First task session starts at 07:00 (actual: ${gargiFirstSession?.start})`);
+
+  // Verify NO task or break is scheduled inside college hours (10:00–12:00 and 13:00–16:00) or lunch (12:00–13:00)
+  const taskInCollegeMorning = gargiPlan.schedule.some((s) => s.type === 'task' && s.start >= '10:00' && s.start < '12:00');
+  const taskInLunch = gargiPlan.schedule.some((s) => s.type === 'task' && s.start >= '12:00' && s.start < '13:00');
+  const taskInCollegeAfternoon = gargiPlan.schedule.some((s) => s.type === 'task' && s.start >= '13:00' && s.start < '16:00');
+  const taskInDinner = gargiPlan.schedule.some((s) => s.type === 'task' && s.start >= '20:00' && s.start < '21:00');
+
+  assert(!taskInCollegeMorning, 'Zero tasks scheduled during Morning College (10:00–12:00)');
+  assert(!taskInLunch, 'Zero tasks scheduled during protected Lunch (12:00–13:00)');
+  assert(!taskInCollegeAfternoon, 'Zero tasks scheduled during Afternoon College (13:00–16:00)');
+  assert(!taskInDinner, 'Zero tasks scheduled during protected Dinner (20:00–21:00)');
+
+  // Verify afternoon resumption after college ends at 16:00
+  const postCollegeSession = gargiPlan.schedule.find((s) => s.type === 'task' && s.start >= '16:00');
+  assert(postCollegeSession && postCollegeSession.start === '16:00', `Tasks resume immediately when college ends at 16:00 (actual: ${postCollegeSession?.start})`);
+
+  // Verify schedule strictly respects day end time 22:00
+  const sessionAfterDayEnd = gargiPlan.schedule.some((s) => s.end > '22:00');
+  assert(!sessionAfterDayEnd, 'Zero sessions scheduled beyond configured 22:00 wind-down time');
+
+  // 29d. Non-overlapping / Disjoint Commitment (e.g. Working Professional morning shift 08:00–12:00)
+  const workerProfile = {
+    name: 'Alex',
+    occupation: 'work_full',
+    sleepHours: 8,
+    wakeUpTime: '07:30',
+    hasCommitment: true,
+    commitmentLabel: 'Morning Work Shift',
+    commitmentStartTime: '08:00',
+    commitmentEndTime: '12:00',
+    lunchOption: 'fixed',
+    lunchStartTime: '12:00',
+    lunchEndTime: '13:00',
+    dinnerOption: 'fixed',
+    dinnerStartTime: '19:00',
+    dinnerEndTime: '19:30',
+    windDownTime: '21:30',
+  };
+
+  const workerRoutine = mapProfileToRoutineSettings(workerProfile);
+  const workerValidation = validateRoutineSettings(workerRoutine);
+  assert(workerValidation.isValid === true, 'Disjoint worker routine passes validation with 0 errors');
+  const singleWorkBlock = workerRoutine.blocks.find((b) => b.id === 'commitment_block');
+  assert(singleWorkBlock && singleWorkBlock.startTime === '08:00' && singleWorkBlock.durationMinutes === 240, 'Single 4-hour commitment block created for non-overlapping work');
+
+  // 29e. Flexible Schedule without Fixed Commitments
+  const flexibleProfile = {
+    name: 'Sam',
+    occupation: 'freelance',
+    sleepHours: 8,
+    wakeUpTime: '09:00',
+    hasCommitment: false,
+    lunchOption: 'changing',
+    dinnerOption: 'fixed',
+    dinnerStartTime: '19:30',
+    dinnerEndTime: '20:15',
+    windDownTime: '23:00',
+  };
+
+  const flexibleRoutine = mapProfileToRoutineSettings(flexibleProfile);
+  assert(flexibleRoutine.dayStartTime === '09:00', 'Flexible profile day starts at 09:00');
+  assert(flexibleRoutine.dayEndTime === '23:00', 'Flexible profile day ends at 23:00');
+  assert(!flexibleRoutine.blocks.some((b) => b.id.startsWith('commitment')), 'No commitment blocks added for flexible freelancer');
+  assert(flexibleRoutine.blocks.some((b) => b.id === 'lunch'), 'Lunch block preserved for flexible routine');
+  const flexibleValidation = validateRoutineSettings(flexibleRoutine);
+  assert(flexibleValidation.isValid === true, 'Flexible routine passes validation cleanly');
+
+  // 29f. Task Date & Data Safety: Onboarding never overwrites or alters existing tasks
+  const testExistingTasks = [
+    { id: 4001, title: 'Existing Task 1', estimatedMinutes: 60, scheduledDate: '2026-10-23', status: 'todo' },
+    { id: 4002, title: 'Existing Task 2', estimatedMinutes: 90, scheduledDate: '2026-10-24', status: 'done', deadline: '2026-10-25 17:00' },
+  ];
+  const initialDate4001 = testExistingTasks[0].scheduledDate;
+  const initialDate4002 = testExistingTasks[1].scheduledDate;
+  const initialDone4002 = testExistingTasks[1].status;
+
+  // Run scheduler with updated routine
+  const routineSafetyPlan = createDailySchedule(testExistingTasks, {
+    currentDate: '2026-10-23',
+    horizon: 'today',
+    routineSettings: gargiRoutine,
+  });
+
+  const enriched4001 = routineSafetyPlan.enrichedTasks.find((t) => t.id === 4001);
+  const enriched4002 = routineSafetyPlan.enrichedTasks.find((t) => t.id === 4002);
+  assert(enriched4001?.scheduledDate === initialDate4001, 'Existing task 4001 retains scheduledDate 2026-10-23');
+  assert(enriched4002?.scheduledDate === initialDate4002, 'Existing task 4002 retains scheduledDate 2026-10-24');
+  assert(enriched4002?.status === initialDone4002, 'Existing task 4002 retains done status');
+
+  // 29g. Editing Preferences After Onboarding Updates Scheduler Routine
+  const updatedGargiProfile = {
+    ...gargiProfile,
+    wakeUpTime: '08:30',
+    lunchStartTime: '13:00',
+    lunchEndTime: '14:00',
+  };
+  const updatedRoutine = mapProfileToRoutineSettings(updatedGargiProfile);
+  assert(updatedRoutine.dayStartTime === '08:30', 'Updated routine reflects new 08:30 wake-up time');
+  const updatedLunch = updatedRoutine.blocks.find((b) => b.id === 'lunch');
+  assert(updatedLunch?.startTime === '13:00', 'Updated routine reflects new 13:00 lunch time');
+
+  // 29h. Safe Fallbacks for Corrupted / Missing Profile Data
+  const emptyProfileRoutine = mapProfileToRoutineSettings({});
+  assert(emptyProfileRoutine.dayStartTime === '08:00', 'Default dayStartTime 08:00 used when profile is empty');
+  assert(emptyProfileRoutine.dayEndTime === '21:00', 'Default dayEndTime 21:00 used when profile is empty');
+  assert(emptyProfileRoutine.blocks.length > 0, 'Default routine blocks used when profile is empty');
+
+  // 29i. Custom Late Dinner Times Automatically Expand dayEndTime & Protect Dinner Block
+  const lateDinnerProfile = {
+    name: 'Alex',
+    occupation: 'college',
+    sleepHours: 8,
+    wakeUpTime: '08:00',
+    hasCommitment: false,
+    lunchOption: 'fixed',
+    lunchStartTime: '12:30',
+    lunchEndTime: '13:30',
+    dinnerOption: 'fixed',
+    dinnerStartTime: '20:30',
+    dinnerEndTime: '21:30',
+    windDownTime: '21:00', // default wind-down earlier than dinner end
+  };
+
+  const lateDinnerRoutine = mapProfileToRoutineSettings(lateDinnerProfile);
+  assert(lateDinnerRoutine.dayEndTime === '21:30', 'Late dinner 20:30–21:30 auto-expands dayEndTime to 21:30');
+  const lateDinnerBlock = lateDinnerRoutine.blocks.find((b) => b.id === 'dinner');
+  assert(lateDinnerBlock && lateDinnerBlock.startTime === '20:30' && lateDinnerBlock.durationMinutes === 60, 'Dinner block 20:30–21:30 is preserved and protected');
+  const lateDinnerValidation = validateRoutineSettings(lateDinnerRoutine);
+  assert(lateDinnerValidation.isValid === true, 'Late dinner routine passes routine validation with 0 errors');
+
+  const lateDinnerPlan = createDailySchedule([
+    { id: 5001, title: 'Evening Study', estimatedMinutes: 120, scheduledDate: '2026-10-23', status: 'todo' }
+  ], {
+    currentDate: '2026-10-23',
+    horizon: 'today',
+    routineSettings: lateDinnerRoutine,
+  });
+  const taskInLateDinner = lateDinnerPlan.schedule.some((s) => s.type === 'task' && s.start >= '20:30' && s.start < '21:30');
+  assert(!taskInLateDinner, 'Zero tasks scheduled during custom protected Dinner (20:30–21:30)');
+
   console.log(`\n================================`);
   if (failures === 0) {
-    console.log('🎉 ALL 28 TEST SUITES PASSED FLAWLESSLY!');
+    console.log('🎉 ALL 29 TEST SUITES PASSED FLAWLESSLY!');
   } else {
     console.error(`💥 ${failures} TEST(S) FAILED.`);
     process.exit(1);

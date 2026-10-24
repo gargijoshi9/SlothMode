@@ -360,6 +360,194 @@ export function validateRoutineSettings(settings) {
 }
 
 /**
+ * Calculates a suggested bedtime string (HH:mm) given wake-up time and sleep hours.
+ */
+export function calcSuggestedBedtime(wakeUpTime, sleepHours) {
+  const wakeMin = timeToMinutes(wakeUpTime || '08:00');
+  const sleepMins = Math.round(Number(sleepHours || 8) * 60);
+  let bedtimeMin = (wakeMin - sleepMins) % 1440;
+  if (bedtimeMin < 0) bedtimeMin += 1440;
+  return minutesToTime(bedtimeMin);
+}
+
+/**
+ * Maps UserProfile onboarding answers into deterministic RoutineSettings consumed by the scheduler.
+ */
+export function mapProfileToRoutineSettings(profile = {}, existingRoutine = null) {
+  const dayStartTime = profile.wakeUpTime || existingRoutine?.dayStartTime || '08:00';
+  let dayEndTime = profile.windDownTime || existingRoutine?.dayEndTime || '21:00';
+
+  const dayStartMin = timeToMinutes(dayStartTime);
+  let dayEndMin = timeToMinutes(dayEndTime);
+
+  const blocks = [];
+
+  const calcDur = (start, end) => {
+    const s = timeToMinutes(start);
+    let e = timeToMinutes(end);
+    if (e <= s) e += 24 * 60;
+    return e - s;
+  };
+
+  // 1. Lunch
+  const lunchEnabled = profile.lunchOption !== 'none';
+  const lunchStart = profile.lunchStartTime || '13:00';
+  const lunchEnd = profile.lunchEndTime || '14:00';
+  let lunchDur = 60;
+  if (profile.lunchOption === 'fixed' && profile.lunchStartTime && profile.lunchEndTime) {
+    lunchDur = Math.max(15, calcDur(lunchStart, lunchEnd));
+  } else if (profile.lunchOption === 'changing') {
+    lunchDur = 45;
+  }
+
+  const lunchStartMin = timeToMinutes(lunchStart);
+  const lunchEndMin = lunchStartMin + lunchDur;
+
+  if (lunchEnabled && lunchStartMin >= dayStartMin && lunchEndMin <= dayEndMin) {
+    blocks.push({
+      id: 'lunch',
+      label: 'Lunch',
+      icon: '🍱',
+      enabled: true,
+      startTime: lunchStart,
+      durationMinutes: lunchDur,
+    });
+  }
+
+  // 2. Dinner
+  const dinnerEnabled = profile.dinnerOption !== 'none';
+  const dinnerStart = profile.dinnerStartTime || '19:00';
+  const dinnerEnd = profile.dinnerEndTime || '19:30';
+  let dinnerDur = 30;
+  if (profile.dinnerOption === 'fixed' && profile.dinnerStartTime && profile.dinnerEndTime) {
+    dinnerDur = Math.max(15, calcDur(dinnerStart, dinnerEnd));
+  } else if (profile.dinnerOption === 'changing') {
+    dinnerDur = 30;
+  }
+
+  const dinnerStartMin = timeToMinutes(dinnerStart);
+  const dinnerEndMin = dinnerStartMin + dinnerDur;
+
+  if (dinnerEnabled && dinnerStartMin >= dayStartMin) {
+    if (dinnerEndMin > dayEndMin) {
+      dayEndMin = Math.min(23 * 60 + 59, dinnerEndMin);
+      dayEndTime = minutesToTime(dayEndMin);
+    }
+    blocks.push({
+      id: 'dinner',
+      label: 'Dinner',
+      icon: '🍲',
+      enabled: true,
+      startTime: dinnerStart,
+      durationMinutes: dinnerDur,
+    });
+  }
+
+  // 3. College / School / Work commitment
+  if (profile.hasCommitment && profile.commitmentStartTime && profile.commitmentEndTime) {
+    const comStart = profile.commitmentStartTime;
+    const comEnd = profile.commitmentEndTime;
+    const comStartMin = timeToMinutes(comStart);
+    const comEndMin = timeToMinutes(comEnd);
+
+    let defaultIcon = '🎓';
+    if (profile.occupation === 'work_full' || profile.occupation === 'work_part') {
+      defaultIcon = '💼';
+    } else if (profile.occupation === 'school') {
+      defaultIcon = '🏫';
+    }
+
+    const label = profile.commitmentLabel || (defaultIcon === '💼' ? 'Work commitments' : 'College / Classes');
+
+    if (comEndMin > comStartMin && comStartMin >= dayStartMin && comEndMin <= dayEndMin) {
+      if (lunchEnabled && lunchStartMin > comStartMin && lunchEndMin < comEndMin) {
+        // Enclosed lunch: cleanly split commitment into morning & afternoon parts around lunch
+        blocks.push({
+          id: 'commitment_morning',
+          label: `${label} (Morning)`,
+          icon: defaultIcon,
+          enabled: true,
+          startTime: comStart,
+          durationMinutes: lunchStartMin - comStartMin,
+        });
+        blocks.push({
+          id: 'commitment_afternoon',
+          label: `${label} (Afternoon)`,
+          icon: defaultIcon,
+          enabled: true,
+          startTime: minutesToTime(lunchEndMin),
+          durationMinutes: comEndMin - lunchEndMin,
+        });
+      } else {
+        blocks.push({
+          id: 'commitment_block',
+          label,
+          icon: defaultIcon,
+          enabled: true,
+          startTime: comStart,
+          durationMinutes: comEndMin - comStartMin,
+        });
+      }
+    }
+  }
+
+  // 4. Nap
+  const existingNap = existingRoutine?.blocks?.find((b) => b.id === 'nap');
+  const napEnabled = profile.keepNap !== undefined ? profile.keepNap : (existingNap ? existingNap.enabled : true);
+  const napStart = existingNap?.startTime || '14:00';
+  const napDur = existingNap?.durationMinutes || 30;
+  const napStartMin = timeToMinutes(napStart);
+  const napEndMin = napStartMin + napDur;
+
+  const hasOverlap = (startM, endM) => {
+    return blocks.some((b) => {
+      const bStart = timeToMinutes(b.startTime);
+      const bEnd = bStart + b.durationMinutes;
+      return startM < bEnd && bStart < endM;
+    });
+  };
+
+  if (napEnabled && napStartMin >= dayStartMin && napEndMin <= dayEndMin && !hasOverlap(napStartMin, napEndMin)) {
+    blocks.push({
+      id: 'nap',
+      label: 'Nap',
+      icon: '😴',
+      enabled: true,
+      startTime: napStart,
+      durationMinutes: napDur,
+    });
+  }
+
+  // 5. Evening Snack
+  const existingSnack = existingRoutine?.blocks?.find((b) => b.id === 'evening_snack');
+  const snackEnabled = profile.keepSnack !== undefined ? profile.keepSnack : (existingSnack ? existingSnack.enabled : true);
+  const snackStart = existingSnack?.startTime || '17:00';
+  const snackDur = existingSnack?.durationMinutes || 15;
+  const snackStartMin = timeToMinutes(snackStart);
+  const snackEndMin = snackStartMin + snackDur;
+
+  if (snackEnabled && snackStartMin >= dayStartMin && snackEndMin <= dayEndMin && !hasOverlap(snackStartMin, snackEndMin)) {
+    blocks.push({
+      id: 'evening_snack',
+      label: 'Evening snack',
+      icon: '🍵',
+      enabled: true,
+      startTime: snackStart,
+      durationMinutes: snackDur,
+    });
+  }
+
+  // Sort chronologically
+  blocks.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+
+  return {
+    dayStartTime,
+    dayEndTime,
+    blocks: blocks.length > 0 ? blocks : DEFAULT_ROUTINE_SETTINGS.blocks,
+  };
+}
+
+/**
  * Create a deterministic schedule across the selected planning horizon:
  * 'today' | 'tomorrow' | 'week' | 'month'.
  *
