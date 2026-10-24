@@ -1,4 +1,4 @@
-import { useState, useId } from "react";
+import { useState, useId, useEffect } from "react";
 import {
   Sparkles,
   ArrowRight,
@@ -165,6 +165,29 @@ export function PersonalizedOnboardingModal({
   }));
 
   const nameInputId = useId();
+
+  // Prevent background scrolling behind the modal
+  useEffect(() => {
+    if (isOpen) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = prevOverflow;
+      };
+    }
+  }, [isOpen]);
+
+  // Support Escape key to dismiss/skip
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onSkip();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onSkip]);
 
   if (!isOpen) return null;
 
@@ -476,7 +499,22 @@ export function PersonalizedOnboardingModal({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          updateProfile({ occupation: item.type });
+                          updateProfile({
+                            occupation: item.type,
+                            hasCommitment:
+                              item.type === "college" ||
+                              item.type === "school" ||
+                              item.type === "work_full" ||
+                              item.type === "work_part",
+                            commitmentLabel:
+                              item.type === "college"
+                                ? "College / Classes"
+                                : item.type === "school"
+                                ? "School hours"
+                                : item.type === "work_full" || item.type === "work_part"
+                                ? "Work commitments"
+                                : "Daily commitment",
+                          });
                         }
                       }}
                     >
@@ -487,8 +525,8 @@ export function PersonalizedOnboardingModal({
                         <h4>{item.label}</h4>
                         <p>{item.desc}</p>
                       </div>
-                      <div className="selection-card-indicator">
-                        {isSelected && <Check size={16} />}
+                      <div className="selection-card-indicator" aria-hidden="true">
+                        {isSelected && <Check size={14} strokeWidth={2.8} />}
                       </div>
                     </div>
                   );
