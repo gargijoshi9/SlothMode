@@ -1,112 +1,178 @@
-# 🦥 SlothMode — Local AI & Smart Scheduling for Students
+# SlothMode
 
-> **Hacktoberfest 2026 DEV Challenge Week 3 — Theme: “Slow and Steady”**  
-> *"You are a human being, not a productivity machine. Slow is a superpower."*
-
-SlothMode is a privacy-first, gentle productivity web application built for students who struggle with cognitive overload and the mental exhaustion of planning. Instead of forcing students into hyper-rigid, overwhelming time-blocking matrices, SlothMode takes a messy brain-dump of tasks, uses **local AI (Gemma 3 1B via Ollama)** to classify effort and break items into bite-sized steps, and applies a **deterministic scheduling algorithm** to generate a calm, conflict-free daily flow with built-in restorative breaks.
+> **A gentle, privacy-first productivity assistant for students and professionals.**  
+> *"Plan gently, work at a sustainable pace, and make progress without the overwhelm."*
 
 ---
 
-## 🎯 The Problem & Target Users
+## Overview
 
-### The Problem
-Traditional productivity software creates a paradox: **planning takes so much cognitive energy that students run out of momentum before actually starting.** When deadlines pile up, students often:
-- Struggle to estimate task durations realistically.
-- Skip breaks out of anxiety, leading to early burnout.
-- Suffer from decision paralysis when facing vague, high-stakes tasks (e.g., *"Study for Operating Systems practical"*).
-- Rely on paid cloud AI services that compromise academic privacy and require internet connectivity.
+Traditional productivity apps often create an exhausting paradox: **planning takes so much cognitive energy that you run out of momentum before you even start.** Facing a chaotic backlog of vague tasks, high-stakes deadlines, and rigid time-blocking tools frequently triggers decision paralysis, planning anxiety, and burnout.
 
-### Target Users
-- **College students & exam takers** juggling practicals, projects, and assignments.
-- **Neurodivergent learners (ADHD / executive dysfunction)** who benefit from concrete subtasks and enforced recovery pauses.
-- **Privacy-conscious builders** who want local, offline-capable AI running directly on their hardware.
+**SlothMode** replaces rigid scheduling with a calm, sustainable workflow inspired by Hacktoberfest's *"Slow and Steady"* philosophy:
+- **Gentle Brain Dump**: Capture messy tasks, classes, and study goals in natural language without worrying about formatting or strict metadata.
+- **Local AI Understanding**: Uses a local **Gemma 3 1B** model via **Ollama** to analyze task scope, categorize effort, provide realistic time estimates, and break daunting assignments into concrete, bite-sized steps.
+- **Deterministic Mathematical Scheduling**: The AI never hallucinates clock times or dates. A deterministic scheduling engine fits tasks, breaks, and focus sessions around your actual sleep schedule, meal times, and protected commitments without overlapping.
+- **Privacy by Design**: Tasks and schedule state remain stored in your browser's `localStorage` and processed through your local machine's Ollama instance. Nothing is sent to external cloud AI providers.
 
 ---
 
-## ✨ Features & Capabilities
+## Screenshots
 
-- **Gentle Brain-Dump**: Add tasks in seconds without worrying about categories, formats, or complicated tags. Optional deadline support is available right from the input bar.
-- **Genuine Local-AI Classification**: Tasks are processed by Google's **Gemma 3 1B** through Ollama's local HTTP API to determine:
-  - Standardized category (`college`, `exam_prep`, `chore`, `health`, `personal`, or `work`)
-  - Realistic time estimates (5–480 minutes)
-  - Urgency level (`critical`, `high`, `medium`, `low`)
-  - Concrete, bite-sized subtasks (e.g., *"Review high-yield flashcards (25m)"*)
-  - Proactive scheduling tips and dependency notes
-- **Deterministic, Conflict-Free Daily Scheduler**:
-  - LLMs are never allowed to hallucinate invalid or overlapping clock times. Time allocation is 100% deterministic and mathematical.
-  - Automatically splits sessions longer than 45 minutes into manageable chunks (e.g., *Part 1 of 2*).
-  - Intersperses restorative breaks (10m short pauses, 20m deep sloth breaks after 90m of focus).
-  - Enforces deadlines, placing tasks before their target times and explaining overflow if a task cannot fit today.
-  - Accommodates blocked commitments (e.g., lunch, recurring commitments).
-- **Interactive Checklists & Progress**: Check off overall tasks or expand individual tasks to complete specific subtasks.
-- **"Replan My Day" Action**: Dynamically recalculates remaining tasks from the current time forward without losing finished work or erasing completed history.
-- **Robust Deterministic Rule-Based Fallback**: If Ollama is offline or the model is missing, SlothMode transitions to a rule-based engine. Fallback and AI-generated results are distinguished in the UI with badges (`✨ Gemma AI` vs `Fallback`).
-- **Zero Cloud Leakage**: Tasks and schedule state persist in the browser's `localStorage` and local Ollama instance. No private data is transmitted to external servers.
+<!--
+  Working note on screenshot assets:
+  The repository contains raw timestamped captures in `docs/screenshots/`.
+  The canonical filenames below are reserved for curated documentation captures.
+  Placeholders are retained below where specific standardized captures are not yet mapped.
+-->
+
+### Dashboard & Focus Flow
+<!-- Canonical: docs/screenshots/dashboard.png -->
+*(Screenshot pending: `docs/screenshots/dashboard.png`)*
+
+### Personalized Onboarding
+<!-- Canonical: docs/screenshots/onboarding.png -->
+*(Screenshot pending: `docs/screenshots/onboarding.png`)*
+
+### Daily Schedule & Routine Blocks
+<!-- Canonical: docs/screenshots/personalized-schedule.png -->
+*(Screenshot pending: `docs/screenshots/personalized-schedule.png`)*
+
+### Actionable Subtask Breakdown
+<!-- Canonical: docs/screenshots/task-breakdown.png -->
+*(Screenshot pending: `docs/screenshots/task-breakdown.png`)*
+
+### Multi-Horizon Planning Views
+<!-- Canonical: docs/screenshots/planning-views.png -->
+*(Screenshot pending: `docs/screenshots/planning-views.png`)*
 
 ---
 
-## 🏗️ Architecture Overview
+## Features
+
+- **Rapid Brain Dump**: Capture tasks instantly with optional due dates, categories, and durations without complex form requirements.
+- **Natural-Language Explicit Duration Parsing**: Detects durations directly from task titles (e.g., *"Study OS for 2 hours"*, *"Read paper for 45 mins"*), skipping redundant AI roundtrips and honoring your explicit intent.
+- **AI-Assisted Task Analysis**: When connected to local Ollama (`gemma3:1b`), SlothMode infers:
+  - **Category**: `college`, `exam_prep`, `chore`, `health`, `personal`, or `work`.
+  - **Duration Estimate**: Realistic student-paced duration bounded between 5 and 480 minutes.
+  - **Urgency**: `critical`, `high`, `medium`, or `low`.
+  - **Actionable Subtasks**: Up to 6 bite-sized steps to overcome task inertia.
+  - **Scheduling Tips & Notes**: Gentle recommendations for pacing and deadline awareness.
+- **Personalized Onboarding & Routine Setup**: An optional, low-pressure 9-step wizard configures wake-up times, target bedtime/sleep needs, class/work hours, meal times (lunch and dinner), and schedule flexibility.
+- **Deterministic Zero-Overlap Scheduling**:
+  - LLMs never assign clock times. The scheduler mathematically guarantees zero overlapping intervals.
+  - Respects protected daily routine blocks (sleep, class/work, lunch, and dinner).
+  - Automatically splits lengthy tasks into manageable 45–120 minute focus sessions (e.g., *Part 1 of 2*).
+  - Automatically inserts 10-minute gentle breaks and 20-minute restorative pauses after extended deep focus.
+  - Enforces deadlines, placing tasks before cutoff times and reporting unscheduled overflow if a task cannot fit today.
+- **Calm Focus Mode**: Dedicated distraction-reduced timer for active sessions with pause/resume, early finish without guilt, and an *"I'm stuck"* helper offering smaller next steps or short breaks.
+- **Multi-Horizon Planning**: Seamlessly switch between **Today**, **Tomorrow**, and **This Week** (Monday–Sunday) calendar views.
+- **Task Management & Rescheduling**: Edit tasks, check off individual subtasks, track progress, and easily re-estimate or reschedule overdue items.
+- **Transparent Provenance Badges**: UI badges clarify how each duration was determined (`🎯 Explicit`, `✨ AI`, `🌱 Rule-based`, `✏️ Manual`, or `⏱ Provisional`).
+- **Resilient Offline Fallback**: If Ollama is offline or the model is missing, the backend seamlessly switches to deterministic rule-based heuristics without disrupting your workflow.
+- **Local Persistence**: All tasks, routine settings, and onboarding preferences persist entirely in browser `localStorage`.
+
+---
+
+## Tech Stack
+
+- **Frontend**: [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Vite](https://vite.dev/), [Lucide React](https://lucide.dev/) (icons), and custom Vanilla CSS.
+  - *Purpose*: Renders the calm user interface, timeline visualization, focus timer, and onboarding wizard.
+- **Backend**: [Express 5](https://expressjs.com/) on [Node.js](https://nodejs.org/) (ES modules), `cors`, `dotenv`.
+  - *Purpose*: Provides API endpoints for health monitoring, Ollama communication, duration parsing, and schedule calculation.
+- **Local AI Inference**: [Ollama](https://ollama.ai/) running **Gemma 3 1B** (`gemma3:1b`).
+  - *Purpose*: Performs semantic task classification, effort estimation, and actionable subtask breakdowns locally via JSON mode.
+- **Scheduling Logic**: Standalone deterministic TypeScript/JavaScript scheduling engine (`server/scheduler.js`).
+  - *Purpose*: Implements mathematical timeline placement, focus-session splitting, break insertion, and routine block protection.
+
+---
+
+## Architecture
 
 ```
-                      ┌────────────────────────────────────────┐
-                      │             React Frontend             │
-                      │   (Vite, TypeScript, Custom CSS)       │
-                      └──────────────────┬─────────────────────┘
-                                         │ Proxy: /api
-                                         ▼
-                      ┌────────────────────────────────────────┐
-                      │          Express Node.js Server        │
-                      │                 Port 3001              │
-                      └──────────┬───────────────────┬─────────┘
-                                 │                   │
-         POST /api/chat (JSON)   │                   │ Deterministic
-                                 ▼                   ▼ Algorithm
-         ┌───────────────────────────────┐   ┌─────────────────────────┐
-         │     Local Ollama Instance     │   │   SlothMode Scheduler   │
-         │          (Port 11434)         │   │ (Session Splitting,     │
-         │         gemma3:1b             │   │  Breaks, Deadlines)     │
-         └───────────────────────────────┘   └─────────────────────────┘
+                    ┌────────────────────────────────────────┐
+                    │             React Frontend             │
+                    │   Vite (Port 5173) · LocalStorage      │
+                    └──────────────────┬─────────────────────┘
+                                       │ HTTP Proxy (/api)
+                                       ▼
+                    ┌────────────────────────────────────────┐
+                    │         Express Backend Server         │
+                    │         Node.js (Port 3001)            │
+                    └──────────┬───────────────────┬─────────┘
+                               │                   │
+      POST /api/chat (JSON)    │                   │ Task Metadata
+      Timeout: 15s             ▼                   ▼
+      ┌────────────────────────────────┐   ┌─────────────────────────┐
+      │     Local Ollama Instance      │   │   Deterministic         │
+      │          (Port 11434)          │   │   Scheduler Engine      │
+      │         gemma3:1b              │   │   (server/scheduler.js) │
+      └────────────────────────────────┘   └─────────────┬───────────┘
+                                                         │
+                                                         ▼
+                                           ┌─────────────────────────┐
+                                           │ Zero-Overlap Daily Plan │
+                                           │ Focus Blocks & Pauses   │
+                                           └─────────────────────────┘
 ```
 
-### Key Modules
-- `server/index.js`: Express server providing `GET /api/health`, `POST /api/classify`, and `POST /api/plan`.
-- `server/ollama.js`: Local Ollama integration, chat API client with JSON schema enforcement, sanitization, and deterministic fallback.
-- `server/scheduler.js`: Standalone deterministic scheduler with zero-overlap mathematical guarantees and deadline enforcement.
-- `src/App.tsx`: React dashboard with timeline view, subtask expanders, live AI health status, and quick-add controls.
-- `src/App.css`: Custom gentle styling adhering to DM Sans / Manrope and soft earth tones.
+### Data Flow
+1. **Task Input**: User creates or edits tasks in the frontend.
+2. **Explicit Duration Check**: If a task title contains an explicit duration (e.g., *"45m"*, *"2 hours"*), Ollama is bypassed to minimize latency and honor user intent.
+3. **AI Task Analysis**: If unestimated, the Express backend sends a structured JSON prompt to Ollama (`/api/chat`) requesting classification, estimated duration, urgency, and subtasks.
+4. **Defensive Validation & Fallback**: Backend validates the JSON response. If Ollama is offline, times out (15s), or returns invalid values (e.g. non-numeric or > 480m), `ruleBasedFallback()` safely computes heuristic estimates with `aiGenerated: false`.
+5. **Deterministic Scheduling**: The scheduler consumes verified task metadata, sorts by urgency and deadline proximity, splits oversized sessions, respects protected routine blocks, inserts restorative breaks, and builds an conflict-free timeline.
+6. **Display & Focus**: Frontend receives the enriched plan, displays timeline cards, and supports launching distraction-reduced focus sessions.
 
 ---
 
-## 🖥️ Installation & Setup (macOS)
+## Prerequisites
 
-### 1. Prerequisites
-- **Node.js** (v18 or higher; tested on Node v25 / macOS)
-- **Ollama** installed on your machine:
-  ```bash
-  # Install via Homebrew
-  brew install ollama
-  ```
+- **Node.js**: v18.0.0 or higher (v20+ recommended).
+- **npm**: v9.0.0 or higher.
+- **Ollama** *(Optional, recommended for AI features)*: Installed and running on your machine.
+- **Gemma 3 1B Model**: Pulled in Ollama (`gemma3:1b`).
 
-### 2. Pull the Gemma 3 1B Model
-Download the compact, efficient Gemma 3 1B model locally:
-```bash
-ollama run gemma3:1b
-```
-*(Once downloaded, you can exit the chat prompt using `/bye` — Ollama will continue running in the background).*
+> [!NOTE]
+> Installing SlothMode's npm dependencies does **not** automatically install or launch Ollama. Ollama must be installed and started separately if you want AI-assisted task breakdown. If Ollama is not installed or running, SlothMode still functions fully using its built-in rule-based fallback engine.
 
-### 3. Clone & Install SlothMode
+---
+
+## Installation & Local Setup
+
+### 1. Clone the Repository
 ```bash
 git clone https://github.com/gargijoshi9/SlothMode.git
 cd SlothMode
+```
+
+### 2. Install Node Dependencies
+```bash
 npm install
 ```
 
-### 4. Configure Environment
-Copy the example environment configuration:
+### 3. (Optional) Set Up Ollama & Pull Gemma 3 1B
+If you want local AI task breakdown:
+
+1. Download and install Ollama from [ollama.ai](https://ollama.ai/) or install via Homebrew on macOS:
+   ```bash
+   brew install ollama
+   ```
+2. Start the Ollama background service:
+   ```bash
+   ollama serve
+   ```
+3. In another terminal window, pull the compact Gemma 3 1B model:
+   ```bash
+   ollama pull gemma3:1b
+   ```
+
+### 4. Configure Environment Variables
+Copy the sample environment configuration file:
 ```bash
 cp .env.example .env
 ```
-Default `.env` settings:
+The default `.env` is configured for local development:
 ```env
 PORT=3001
 OLLAMA_BASE_URL=http://127.0.0.1:11434
@@ -114,67 +180,182 @@ OLLAMA_MODEL=gemma3:1b
 ```
 
 ### 5. Start the Application
-Run both the backend Express server and Vite frontend concurrently:
+
+You can start both backend and frontend concurrently with one command:
 ```bash
 npm run dev:all
 ```
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:3001`
-- Health check: `http://localhost:3001/api/health`
 
-Alternatively, you can run the server and frontend in separate terminals:
+Alternatively, you can run the backend and frontend in two separate terminal windows:
+
+**Terminal 1 (Backend Express Server):**
 ```bash
-# Terminal 1: Backend
 npm run server
+```
 
-# Terminal 2: Frontend
+**Terminal 2 (Frontend Vite Dev Server):**
+```bash
 npm run dev
 ```
 
----
-
-## 🔒 Privacy, Local Inference & Cost Efficiency
-
-| Dimension | Cloud AI APIs (OpenAI / Claude) | SlothMode (Local Gemma via Ollama) |
-| :--- | :--- | :--- |
-| **Data Privacy** | Prompts and student schedules sent across the internet | 100% on-device; requests never leave `localhost` |
-| **API Costs** | Recurring monthly fees / pay-per-token charges | **$0.00 forever**; runs free on consumer hardware |
-| **Offline Reliability** | Fails completely if campus Wi-Fi drops | Fully functional offline once model is pulled |
-| **Latency** | Network round-trip variability | Local socket communication (`127.0.0.1`) |
+### 6. Open SlothMode
+Open your web browser and navigate to:
+```
+http://localhost:5173
+```
+- Frontend UI: `http://localhost:5173`
+- Backend API: `http://localhost:3001`
+- Health check status: `http://localhost:3001/api/health`
 
 ---
 
-## 🛡️ Limitations & Fallback Behavior
+## Configuration
 
-1. **First-Run Model Download**: Ollama requires downloading `gemma3:1b` (~1.2 GB) once before offline AI inference is possible.
-2. **Deterministic Fallback Transparency**: If Ollama is not running, the backend automatically activates its rule-based keyword engine. SlothMode marks these tasks with a distinct `Fallback` tag in the UI so the user is never misled into thinking AI generated a result when it did not.
-3. **Working Hours Default**: The scheduler defaults to a 09:00 to 18:00 window with a built-in lunch pause (13:00 to 13:45). If tasks exceed available time, the app highlights them in an **Overflow & Notice** banner rather than quietly dropping them.
+Supported environment variables (defined in `.env` and read by `server/index.js` and `server/ollama.js`):
+
+| Variable | Default Value | Service | Description |
+| :--- | :--- | :--- | :--- |
+| `PORT` | `3001` | Backend Express Server | HTTP port for the backend API. |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama Client (`server/ollama.js`) | Base URL where the local Ollama instance is reachable. |
+| `OLLAMA_MODEL` | `gemma3:1b` | Ollama Client (`server/ollama.js`) | Name of the local LLM model used for classification and estimation. |
 
 ---
 
-## 🧪 Testing & Verification
+## How to Use SlothMode
 
-Run the automated verification suite to test health checks, real Gemma inference, fallback modes, deadline checks, and zero-overlap guarantees:
+1. **Personalized Onboarding**: On first launch, step through the gentle wizard to configure your wake-up time, sleep needs, daily commitments (college, school, or work), meal times, and planning style. You can also click **Skip setup** to start with sensible gentle defaults.
+2. **Review Routine Preferences**: Open **Daily Routine & Preferences** in the header at any time to adjust your planning window, routine blocks, or focus session duration preferences.
+3. **Brain Dump Tasks**: Type any task into the input bar (e.g., *"Study operating systems lab for 2 hours"* or *"Clean desk"*). You can optionally assign a category, deadline, or manual duration.
+4. **Observe AI Analysis**: Tasks without manual durations will display an `Estimating...` badge while Gemma 3 1B analyzes the task. Once completed, you will see category coloring, estimated focus time, urgency, and suggested subtasks.
+5. **Generate Your Gentle Plan**: Click **Make my plan** (or **Replan my day**). The scheduler builds a balanced timeline starting from your active start time, fitting focus sessions and breaks around your protected routine blocks.
+6. **Start Focus Sessions**: Click the **Start Focus** button beside any task or scheduled block to launch the calming, fullscreen Focus Mode. If you run into friction, use the **I'm stuck** button for gentle relief.
+7. **Complete & Expand Subtasks**: Check off individual subtasks as you make progress, or mark the entire task completed.
+8. **Switch Horizons**: Use the horizon tabs to review plans for **Today**, **Tomorrow**, or browse the **This Week** calendar.
+
+---
+
+## AI & Fallback Behavior
+
+- **What the Local Model Does**: The local Gemma 3 1B model acts as a semantic interpreter. It suggests categories, reasonable durations for student tasks, urgency weights, and broken-down subtask steps.
+- **Explicit Duration Bypass**: Whenever a duration is explicitly provided in the title (e.g. *"90 mins"*, *"1.5 hrs"*) or entered manually, SlothMode skips Ollama calls. This eliminates needless inference delay and preserves user intent.
+- **Graceful Fallback Engine**: If Ollama is offline, unreachable, times out after 15 seconds, or returns malformed JSON, the backend invokes `ruleBasedFallback()`. This deterministic engine uses keyword matching and deadline math to assign safe categories, durations, and subtasks.
+- **Transparent Attribution**: The UI explicitly flags provenance:
+  - `🎯 Explicit`: Directly parsed from your text.
+  - `✨ AI`: Generated by local Gemma 3 1B.
+  - `🌱 Rule-based`: Computed via heuristic fallback.
+  - `✏️ Manual`: Set directly by you.
+  - `⏱ Provisional`: Default placeholder awaiting estimation.
+- **Scheduling is 100% Deterministic**: The LLM never computes or outputs start/end times. All schedule timing is computed by deterministic algorithms in `server/scheduler.js`.
+
+---
+
+## Testing & Quality Checks
+
+SlothMode includes a standalone test suite covering AI health checks, explicit duration parsing, fallback mechanics, deadline evaluation, and deterministic zero-overlap guarantees:
+
 ```bash
+# Run the 29-suite backend and scheduler verification
 node server/test_suite.js
 ```
 
-Run ESLint and production build validation:
+Linting and build validation:
 ```bash
+# Check code style with ESLint
 npm run lint
+
+# Validate TypeScript compilation and production build
 npm run build
 ```
 
 ---
 
-## 📸 Demo Flow
+## Troubleshooting
 
-1. **Brain Dump**: Type `Revise operating systems practical` and click **Add Task**.
-2. **Make My Plan**: Click **Make my plan** (`Sparkles` icon).
-3. **Local AI Enrichment**: Gemma 3 1B classifies the task as `college` / `high` urgency and automatically breaks it down into actionable steps.
-4. **Paced Flow**: The app outputs a calm schedule (e.g. 09:00 - 09:45 focus, followed by a 10-minute restorative Sloth Pause).
-5. **Replan**: Completed tasks stay marked done, and clicking **Replan my day** reschedules unfinished work seamlessly.
+### 1. "Ollama offline or not reachable"
+- Check if Ollama is running by opening a terminal and running:
+  ```bash
+  curl http://127.0.0.1:11434/api/tags
+  ```
+- If it is not running, start Ollama with `ollama serve`.
+- Verify that `OLLAMA_BASE_URL` in your `.env` matches the running port (`http://127.0.0.1:11434`).
+
+### 2. "Model gemma3:1b is not installed yet"
+- Verify your local models with:
+  ```bash
+  ollama list
+  ```
+- If `gemma3:1b` is missing, pull it:
+  ```bash
+  ollama pull gemma3:1b
+  ```
+
+### 3. Frontend Displays "Cannot reach backend"
+- Make sure the backend server is running on port 3001 (`npm run server` or `npm run dev:all`).
+- Check `http://localhost:3001/api/health` directly in your browser.
+
+### 4. Tasks Fall Back to "Rule-based" Even When Ollama is Running
+- If the model takes longer than 15 seconds to respond (e.g. during cold-start on low-resource machines), the request will time out and safely trigger fallback. Subsequent requests are typically faster once the model is loaded in memory.
+- Check backend console logs for specific fallback reasons.
 
 ---
 
-*“A little progress is still progress.”*
+## Project Structure
+
+```
+SlothMode/
+├── docs/                     # Project documentation and screenshot assets
+│   └── screenshots/          # Application screenshot images
+├── server/                   # Express backend & deterministic scheduling engine
+│   ├── dateUtils.js          # Calendar and timezone date calculation utilities
+│   ├── durationParser.js     # Natural-language explicit duration parser
+│   ├── index.js              # Express API server entry point & route handlers
+│   ├── ollama.js             # Ollama client, JSON schema validation & fallback engine
+│   ├── scheduler.js          # Deterministic zero-overlap daily & multi-horizon scheduler
+│   └── test_suite.js         # Comprehensive 29-suite automated verification suite
+├── src/                      # React frontend application
+│   ├── App.tsx               # Primary application component, dashboard & state management
+│   ├── App.css               # Core design system tokens, typography & component styles
+│   ├── PersonalizedOnboardingModal.tsx # Multi-step onboarding and routine configuration wizard
+│   ├── dateUtils.ts          # Frontend date formatting and week calculation helpers
+│   ├── durationParser.ts     # Client-side explicit duration parser mirror
+│   ├── onboardingUtils.ts    # Routine mapping and profile default utilities
+│   └── types.ts              # TypeScript interfaces for tasks, schedules, and profiles
+├── .env.example              # Sample environment configuration
+├── package.json              # Project scripts and dependency declarations
+├── tsconfig.json             # TypeScript project configuration
+└── vite.config.ts            # Vite bundler configuration and API proxy
+```
+
+---
+
+## Privacy & Data Handling
+
+- **No Remote AI Cloud APIs**: Prompts are sent exclusively to your local loopback address (`http://127.0.0.1:11434`). No task titles, deadlines, or personal context are transmitted over the internet.
+- **Client-Side Persistence**: Tasks, focus history, routine preferences, and completed items are stored strictly in your browser's `localStorage` (`slothmode_tasks_v1`, `slothmode_user_profile_v1`, etc.).
+- **No Analytics or Trackers**: SlothMode contains no telemetry, external tracking scripts, or user fingerprinting.
+
+---
+
+## Contributing
+
+Contributions, bug reports, and suggestions are welcome! SlothMode was created for Hacktoberfest 2026 under the *"Slow and Steady"* theme.
+
+1. **Fork the repository** on GitHub.
+2. **Create a feature branch**:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+3. **Verify tests and linting**:
+   ```bash
+   npm run lint
+   npm run build
+   node server/test_suite.js
+   ```
+4. **Commit your changes** with clear, descriptive commit messages.
+5. **Open a Pull Request** describing the motivation and testing done.
+
+---
+
+## License
+
+This project currently does not contain an explicit open-source license file in the repository root. A license (such as MIT or Apache 2.0) may need to be added by the repository maintainer.
