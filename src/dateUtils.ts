@@ -312,7 +312,7 @@ export function formatWeekHeading(mondayDate: Date): string {
   const sunMonth = sundayDate.toLocaleDateString(undefined, { month: "short" });
 
   if (sameMonth && sameYear) {
-    return `${monMonth} ${mondayDate.getDate()} – ${sundayDate.getDate()}, ${mondayDate.getFullYear()}`;
+    return `${monMonth} ${mondayDate.getDate()} – ${sunMonth} ${sundayDate.getDate()}, ${mondayDate.getFullYear()}`;
   }
   if (sameYear) {
     return `${monMonth} ${mondayDate.getDate()} – ${sunMonth} ${sundayDate.getDate()}, ${mondayDate.getFullYear()}`;

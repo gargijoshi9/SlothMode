@@ -51,7 +51,6 @@ import {
   getTodayDateString,
   getTomorrowDateString,
   toLocalDateString,
-  getDatesInRange,
   getMondayOfWeek,
   getDaysOfWeek,
   formatWeekHeading,
@@ -505,6 +504,11 @@ function App() {
 
   // Week navigation state
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() =>
+    getMondayOfWeek(new Date())
+  );
+
+  // Timeline week navigation state (displays current calendar week Mon–Sun by default)
+  const [timelineWeekStart, setTimelineWeekStart] = useState<Date>(() =>
     getMondayOfWeek(new Date())
   );
 
@@ -980,7 +984,7 @@ function App() {
         ? `Paced for your explicit ${explicit.durationMinutes}m focus session.`
         : (hasManualDuration
           ? `Paced for your set ${finalDuration}m focus session.`
-          : "Take it slow and steady. Work in focused intervals."),
+          : undefined),
       aiGenerated: false,
     };
 
@@ -2497,43 +2501,33 @@ function App() {
 
             {/* Schedule Timeline Section (Shown once plan is created) */}
             {plan && (() => {
-              const scheduleDates = Array.from(
-                new Set(
-                  plan.schedule
-                    .map((i) => i.date || i.scheduledDate)
-                    .filter(Boolean) as string[]
-                )
-              ).sort();
-              const rangeDates =
-                plan.startDate && plan.endDate
-                  ? getDatesInRange(plan.startDate, plan.endDate)
-                  : [];
-              const allDates = Array.from(
-                new Set([
-                  ...scheduleDates,
-                  ...rangeDates,
-                  selectedTimelineDate,
-                  getTodayDateString(),
-                ].filter(Boolean))
-              ).sort();
+              const timelineWeekDays = getDaysOfWeek(timelineWeekStart);
+              const weekDateItems = timelineWeekDays.map((d) => {
+                const dStr = getTodayDateString(d);
+                return {
+                  dateObj: d,
+                  dateStr: dStr,
+                  dayName: d.toLocaleDateString(undefined, { weekday: "short" }),
+                  dayNum: d.getDate(),
+                  isToday: dStr === currentLocalDateStr,
+                };
+              });
+              const weekDateStrings = weekDateItems.map((w) => w.dateStr);
 
-              // Auto-recover active timeline date so schedule is NEVER hidden under an empty date on reload
+              // Auto-recover active timeline date within the selected week
               let activeTimelineDate = selectedTimelineDate;
-              const hasItemsOnSelected = plan.schedule.some(
-                (item) => (item.date || item.scheduledDate) === selectedTimelineDate
-              );
-              if (!hasItemsOnSelected) {
-                const dateWithTasks = scheduleDates.find((d) =>
+              if (!weekDateStrings.includes(activeTimelineDate)) {
+                const dateWithTasks = weekDateStrings.find((dStr) =>
                   plan.schedule.some(
-                    (s) => s.type === "task" && (s.date || s.scheduledDate) === d
+                    (s) => s.type === "task" && (s.date || s.scheduledDate) === dStr
                   )
                 );
                 if (dateWithTasks) {
                   activeTimelineDate = dateWithTasks;
-                } else if (scheduleDates.length > 0) {
-                  activeTimelineDate = scheduleDates[0];
+                } else if (weekDateStrings.includes(currentLocalDateStr)) {
+                  activeTimelineDate = currentLocalDateStr;
                 } else {
-                  activeTimelineDate = getTodayDateString();
+                  activeTimelineDate = weekDateStrings[0];
                 }
               }
 
@@ -2663,39 +2657,110 @@ function App() {
 
                   {showRoutineSettings && renderRoutineSettingsCard()}
 
-                  {/* Multi-date switch chips when plan covers multiple dates */}
-                  {allDates.length > 1 && (
-                    <div className="timeline-date-selector">
-                      <span className="timeline-date-label">TIMELINE DATE:</span>
-                      <div className="timeline-date-chips">
-                        {allDates.map((dStr) => {
-                          const countForDate = plan.schedule.filter(
-                            (s) =>
-                              s.type === "task" &&
-                              (s.date || s.scheduledDate) === dStr
-                          ).length;
-                          return (
-                            <button
-                              key={dStr}
-                              type="button"
-                              className={`timeline-date-chip ${
-                                dStr === activeTimelineDate ? "active" : ""
-                              }`}
-                              onClick={() => setSelectedTimelineDate(dStr)}
-                              title={`View timeline for ${formatDisplayDate(dStr)} (${countForDate} focus sessions)`}
-                            >
-                              {formatDisplayDate(dStr)}
-                              {countForDate > 0 && (
-                                <span className="chip-count-badge">
-                                  {countForDate}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
+                  {/* Current week's timeline navigation & Monday–Sunday selector */}
+                  <div className="timeline-week-nav-bar">
+                    <div className="timeline-week-range">
+                      {formatWeekHeading(timelineWeekStart)}
                     </div>
-                  )}
+                    <div className="timeline-week-controls">
+                      <button
+                        type="button"
+                        className="timeline-week-btn"
+                        onClick={() => {
+                          setTimelineWeekStart(
+                            (prev) =>
+                              new Date(
+                                prev.getFullYear(),
+                                prev.getMonth(),
+                                prev.getDate() - 7
+                              )
+                          );
+                        }}
+                        title="View previous week"
+                        aria-label="Previous week"
+                      >
+                        <ChevronLeft size={14} />
+                        <span>Prev</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`timeline-week-btn today-btn ${
+                          timelineWeekStart.getTime() ===
+                          getMondayOfWeek(new Date()).getTime()
+                            ? "active"
+                            : ""
+                        }`}
+                        onClick={() => {
+                          const mon = getMondayOfWeek(new Date());
+                          setTimelineWeekStart(mon);
+                          setSelectedTimelineDate(getTodayDateString());
+                        }}
+                        title="Jump to current week"
+                      >
+                        This week
+                      </button>
+                      <button
+                        type="button"
+                        className="timeline-week-btn"
+                        onClick={() => {
+                          setTimelineWeekStart(
+                            (prev) =>
+                              new Date(
+                                prev.getFullYear(),
+                                prev.getMonth(),
+                                prev.getDate() + 7
+                              )
+                          );
+                        }}
+                        title="View next week"
+                        aria-label="Next week"
+                      >
+                        <span>Next</span>
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    className="timeline-days-grid"
+                    role="tablist"
+                    aria-label="Current week timeline days"
+                  >
+                    {weekDateItems.map((day) => {
+                      const countForDate = plan.schedule.filter(
+                        (s) =>
+                          s.type === "task" &&
+                          (s.date || s.scheduledDate) === day.dateStr
+                      ).length;
+                      const isActive = day.dateStr === activeTimelineDate;
+                      return (
+                        <button
+                          key={day.dateStr}
+                          type="button"
+                          role="tab"
+                          aria-selected={isActive}
+                          className={`timeline-day-chip ${
+                            isActive ? "active" : ""
+                          } ${day.isToday ? "is-today" : ""}`}
+                          onClick={() => setSelectedTimelineDate(day.dateStr)}
+                          title={`View timeline for ${formatDisplayDate(
+                            day.dateStr
+                          )} (${countForDate} focus sessions)`}
+                        >
+                          <span className="chip-day-name">{day.dayName}</span>
+                          <span className="chip-day-num">{day.dayNum}</span>
+                          {day.isToday && (
+                            <span className="chip-today-dot">Today</span>
+                          )}
+                          {countForDate > 0 && (
+                            <span className="chip-sessions-count">
+                              {countForDate} {countForDate === 1 ? "task" : "tasks"}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
 
                   {/* Unscheduled / Overflow explanations if any */}
                   {plan.overflowTasks && plan.overflowTasks.length > 0 && (
@@ -2724,7 +2789,11 @@ function App() {
                       displayedScheduleItems.map((item) => (
                         <div
                           key={item.id}
-                          className={`schedule-item schedule-item-${item.type}`}
+                          className={`schedule-item schedule-item-${item.type} ${
+                            item.type === "task"
+                              ? `category-item-${item.category || "personal"}`
+                              : ""
+                          }`}
                         >
                           <div className="item-time-col">
                             <span className="item-time-range">
@@ -2774,10 +2843,9 @@ function App() {
                                   </span>
                                 )}
 
-                              {item.category && (
+                              {item.category && item.category !== "personal" && (
                                 <span
-                                  className="priority priority-low"
-                                  style={{ textTransform: "capitalize" }}
+                                  className={`category-tag category-${item.category}`}
                                 >
                                   {item.category.replace("_", " ")}
                                 </span>
@@ -2802,16 +2870,17 @@ function App() {
                               )}
                             </div>
 
-                            <p className="item-desc">
-                              {item.type === "break"
-                                ? "Step away from the screen, stretch, and let your subconscious process what you just did."
-                                : item.type === "routine" || item.type === "blocked"
-                                ? "Protected daily routine block · No tasks or breaks scheduled during this time."
-                                : item.schedulingTip ||
-                                  "Focus with zero multitasking during this block."}
-                            </p>
+                            {item.type === "break" ? (
+                              <p className="item-desc">
+                                Step away from the screen, stretch, and let your mind rest.
+                              </p>
+                            ) : item.schedulingTip ? (
+                              <p className="item-desc">{item.schedulingTip}</p>
+                            ) : null}
+                          </div>
 
-                            {item.type === "task" && (
+                          {item.type === "task" && (
+                            <div className="item-actions-col">
                               <button
                                 type="button"
                                 className="timeline-focus-btn"
@@ -2819,11 +2888,11 @@ function App() {
                                 title={`Start focus session for "${item.title}"`}
                                 aria-label={`Start focus session for ${item.title}`}
                               >
-                                <Play size={11} fill="currentColor" />
-                                <span>Start focus</span>
+                                <Play size={12} fill="currentColor" />
+                                <span>Start Focus</span>
                               </button>
-                            )}
-                          </div>
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
@@ -2934,7 +3003,7 @@ function App() {
                         key={task.id}
                         className={`task-row-container ${
                           task.done ? "task-done" : ""
-                        }`}
+                        } category-row-${task.category || "personal"}`}
                       >
                         <div className="task-row-main">
                           <button
@@ -2971,10 +3040,16 @@ function App() {
                           >
                             <h3>{task.title}</h3>
                             <div className="task-meta">
-                              <span style={{ textTransform: "capitalize" }}>
-                                {task.category?.replace("_", " ")}
-                              </span>
-                              <span className="meta-dot">·</span>
+                              {task.category && task.category !== "personal" && (
+                                <>
+                                  <span
+                                    className={`category-tag category-${task.category}`}
+                                  >
+                                    {task.category.replace("_", " ")}
+                                  </span>
+                                  <span className="meta-dot">·</span>
+                                </>
+                              )}
                               <span>
                                 <Clock3 size={13} /> {task.duration || 30} min
                               </span>
@@ -3072,8 +3147,8 @@ function App() {
                               title={`Start focus session for "${task.title}"`}
                               aria-label={`Start focus session for ${task.title}`}
                             >
-                              <Play size={10} fill="currentColor" />
-                              <span>Focus</span>
+                              <Play size={11} fill="currentColor" />
+                              <span>Start Focus</span>
                             </button>
                           )}
 
@@ -3431,8 +3506,8 @@ function App() {
                                     );
                                   })()}
 
-                                  {task.category && (
-                                    <span className="cal-category-tag">
+                                  {task.category && task.category !== "personal" && (
+                                    <span className={`category-tag category-${task.category}`}>
                                       {task.category.replace("_", " ")}
                                     </span>
                                   )}
