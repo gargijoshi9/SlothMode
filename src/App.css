@@ -22,6 +22,14 @@
   --border-strong: #CBD4C5;
   --border-focus: #3D6649;
 
+  /* Aliases for consistent component theming */
+  --color-primary: #3D6649;
+  --color-primary-hover: #32543C;
+  --color-primary-light: #7DA67F;
+  --color-primary-selection: #E8EFE5;
+  --border-color: #E2E6DC;
+  --text-main: #242922;
+
   --accent-peach: #FFF2EB;
   --accent-peach-text: #B46A44;
   --accent-lavender: #F2EEF8;
@@ -5030,35 +5038,53 @@ button.nav-item {
   align-items: flex-start;
   gap: 14px;
   background: #ffffff;
-  border: 1.5px solid var(--border-color);
+  border: 1.5px solid var(--border-color, #E2E6DC);
   border-radius: var(--radius-md);
   padding: 16px 18px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   text-align: left;
+  position: relative;
+  user-select: none;
 }
 
 .selection-card:hover {
-  border-color: var(--color-primary-light);
+  border-color: var(--primary-sage, #3D6649);
   background: #fbfcf9;
   transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(36, 41, 34, 0.05);
 }
 
 .selection-card.selected {
-  border-color: var(--color-primary);
-  background: var(--color-primary-selection);
-  box-shadow: 0 0 0 1.5px var(--color-primary);
+  border-color: #3D6649 !important;
+  background: #E8EFE5 !important;
+  box-shadow: 0 0 0 2px #3D6649, 0 4px 14px rgba(61, 102, 73, 0.14) !important;
+  transform: translateY(-1px);
 }
 
 .selection-card:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid #3D6649;
   outline-offset: 2px;
 }
 
 .selection-card-icon {
-  color: var(--color-primary);
+  color: #586154;
   margin-top: 2px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.selection-card.selected .selection-card-icon {
+  color: #3D6649 !important;
+  transform: scale(1.08);
+}
+
+.selection-card-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .selection-card-content h4 {
@@ -5066,24 +5092,43 @@ button.nav-item {
   font-family: inherit;
   font-size: var(--font-size-base);
   font-weight: 600;
-  color: var(--text-main);
+  color: var(--text-main, #242922);
+  transition: color 0.15s ease;
+}
+
+.selection-card.selected .selection-card-content h4 {
+  color: #1F3625 !important;
+  font-weight: 700;
 }
 
 .selection-card-content p {
   margin: 0;
   font-size: var(--font-size-sm);
   line-height: 1.45;
-  color: var(--text-secondary);
+  color: var(--text-secondary, #586154);
 }
 
 .selection-card-indicator {
   margin-left: auto;
-  color: #55794f;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  min-height: 18px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong, #CBD4C5);
+  background: #ffffff;
+  color: #ffffff;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  margin-top: 2px;
+}
+
+.selection-card.selected .selection-card-indicator {
+  border-color: #3D6649 !important;
+  background: #3D6649 !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(61, 102, 73, 0.25);
 }
 
 .sleep-duration-grid {

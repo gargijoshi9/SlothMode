@@ -499,7 +499,22 @@ export function PersonalizedOnboardingModal({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          updateProfile({ occupation: item.type });
+                          updateProfile({
+                            occupation: item.type,
+                            hasCommitment:
+                              item.type === "college" ||
+                              item.type === "school" ||
+                              item.type === "work_full" ||
+                              item.type === "work_part",
+                            commitmentLabel:
+                              item.type === "college"
+                                ? "College / Classes"
+                                : item.type === "school"
+                                ? "School hours"
+                                : item.type === "work_full" || item.type === "work_part"
+                                ? "Work commitments"
+                                : "Daily commitment",
+                          });
                         }
                       }}
                     >
@@ -510,8 +525,8 @@ export function PersonalizedOnboardingModal({
                         <h4>{item.label}</h4>
                         <p>{item.desc}</p>
                       </div>
-                      <div className="selection-card-indicator">
-                        {isSelected && <Check size={16} />}
+                      <div className="selection-card-indicator" aria-hidden="true">
+                        {isSelected && <Check size={14} strokeWidth={2.8} />}
                       </div>
                     </div>
                   );
