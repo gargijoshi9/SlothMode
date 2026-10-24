@@ -26,6 +26,7 @@ import {
   Play,
   Pause,
   RotateCcw,
+  Menu,
 } from "lucide-react";
 import "./App.css";
 import type {
@@ -476,6 +477,9 @@ function App() {
       return false;
     }
   });
+
+  // Mobile navigation drawer state
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   const dismissOnboarding = () => {
     setShowOnboarding(false);
@@ -1932,7 +1936,14 @@ function App() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar">
+      {isMobileMenuOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setIsMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside className={`sidebar ${isMobileMenuOpen ? "open" : ""}`}>
         <a className="brand" href="#">
           <span className="brand-icon">
             <Leaf size={23} />
@@ -1942,25 +1953,34 @@ function App() {
           </span>
         </a>
 
-        <p className="nav-label">YOUR SPACE</p>
+        <p className="nav-label">Planning</p>
         <button
           type="button"
           className={`nav-item ${activeTab === "day" ? "active" : ""}`}
-          onClick={() => setActiveTab("day")}
+          onClick={() => {
+            setActiveTab("day");
+            setIsMobileMenuOpen(false);
+          }}
         >
           <Clock3 size={18} /> My day
         </button>
         <button
           type="button"
           className={`nav-item ${activeTab === "week" ? "active" : ""}`}
-          onClick={() => setActiveTab("week")}
+          onClick={() => {
+            setActiveTab("week");
+            setIsMobileMenuOpen(false);
+          }}
         >
           <Calendar size={18} /> Week view
         </button>
         <button
           type="button"
           className={`nav-item ${activeTab === "month" ? "active" : ""}`}
-          onClick={() => setActiveTab("month")}
+          onClick={() => {
+            setActiveTab("month");
+            setIsMobileMenuOpen(false);
+          }}
         >
           <Calendar size={18} /> Month view
         </button>
@@ -1969,6 +1989,7 @@ function App() {
           className="nav-item"
           onClick={() => {
             setActiveTab("day");
+            setIsMobileMenuOpen(false);
             setTimeout(() => {
               document.getElementById("tasks")?.scrollIntoView({ behavior: "smooth" });
             }, 50);
@@ -1979,7 +2000,10 @@ function App() {
         <button
           type="button"
           className="nav-item"
-          onClick={() => setShowOnboarding(true)}
+          onClick={() => {
+            setIsMobileMenuOpen(false);
+            setShowOnboarding(true);
+          }}
           title="Personalize your daily routine and pace"
         >
           <Sparkles size={18} /> Routine guide
@@ -1999,11 +2023,22 @@ function App() {
 
       <section className="main-content" id="today">
         <header className="topbar">
-          <span className="date-label">
-            {userProfile.name
-              ? `WELCOME, ${userProfile.name.toUpperCase()} · YOUR SPACE, YOUR PACE`
-              : "YOUR SPACE, YOUR PACE"}
-          </span>
+          <div className="topbar-left">
+            <button
+              type="button"
+              className="mobile-menu-toggle"
+              onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+              aria-label="Toggle navigation menu"
+              aria-expanded={isMobileMenuOpen}
+            >
+              <Menu size={20} />
+            </button>
+            <span className="date-label">
+              {userProfile.name
+                ? `Welcome, ${userProfile.name} · Your space, your pace`
+                : "Your space, your pace"}
+            </span>
+          </div>
 
           {/* View switcher in topbar */}
           <div className="view-switch-pills">
@@ -2122,7 +2157,6 @@ function App() {
           <>
             <section className="welcome">
               <div>
-                <p className="eyebrow">A LITTLE PROGRESS IS STILL PROGRESS</p>
                 <h1>
                   Let's take it <span>slow.</span>
                 </h1>
@@ -2417,7 +2451,7 @@ function App() {
                   <span className="stat-icon green">
                     <Check size={19} />
                   </span>
-                  <span className="stat-label">DONE SO FAR</span>
+                  <span className="stat-label">Completed tasks</span>
                   <strong>
                     {completed}
                     <small> / {tasks.length}</small>
@@ -2437,7 +2471,7 @@ function App() {
                   <span className="stat-icon peach">
                     <Clock3 size={19} />
                   </span>
-                  <span className="stat-label">TIME LEFT TO PLAN</span>
+                  <span className="stat-label">Estimated focus</span>
                   <strong>
                     {Math.floor(totalMinutes / 60)}
                     <small>h </small>
@@ -2454,7 +2488,7 @@ function App() {
                   <span className="stat-icon lavender">
                     <Coffee size={19} />
                   </span>
-                  <span className="stat-label">YOUR REMINDER</span>
+                  <span className="stat-label">Gentle reminder</span>
                   <strong className="gentle-text">Take a breath.</strong>
                   <p className="stat-footnote">Rest is productive, too.</p>
                 </div>
@@ -2525,16 +2559,14 @@ function App() {
                   <div className="schedule-header">
                     <div className="schedule-header-top">
                       <div className="schedule-header-titles">
-                        <p className="eyebrow">YOUR GENTLE TIMELINE</p>
                         <h2>
                           {activeTimelineDate === currentLocalDateStr
-                            ? "Today"
+                            ? "Today's timeline"
                             : activeTimelineDate === getTomorrowDateString()
-                            ? "Tomorrow"
-                            : formatDisplayDate(activeTimelineDate)}
-                          's Pace & Flow
+                            ? "Tomorrow's timeline"
+                            : `${formatDisplayDate(activeTimelineDate)} timeline`}
                         </h2>
-                        <p>
+                        <p className="schedule-header-subtitle">
                           Working window: {plan.dayWindow.start} – {plan.dayWindow.end} ·{" "}
                           {plan.aiStatus?.note}
                         </p>
@@ -2822,16 +2854,15 @@ function App() {
             <section className="tasks-section" id="tasks">
               <div className="tasks-title-row">
                 <div>
-                  <p className="eyebrow">SMALL STEPS COUNT</p>
                   <h2>
                     {planningHorizon === "today"
-                      ? "Today's intentions"
+                      ? "Today's tasks"
                       : planningHorizon === "tomorrow"
-                      ? "Tomorrow's intentions"
+                      ? "Tomorrow's tasks"
                       : planningHorizon === "week"
-                      ? "This week's intentions"
-                      : "This month's intentions"}{" "}
-                    {tasks.length > 0 && <span>({tasks.length})</span>}
+                      ? "This week's tasks"
+                      : "This month's tasks"}{" "}
+                    {tasks.length > 0 && <span className="tasks-count-pill">({tasks.length})</span>}
                   </h2>
                 </div>
                 {tasks.length > 0 && (
@@ -3136,9 +3167,8 @@ function App() {
             {/* Week navigation bar */}
             <div className="week-nav-bar">
               <div className="week-heading-group">
-                <p className="eyebrow">YOUR WEEK AT A GLANCE</p>
-                <h2>{formatWeekHeading(currentWeekStart)}</h2>
-                <p>Monday through Sunday · Focus calmly one day at a time</p>
+                <h2>Your week · {formatWeekHeading(currentWeekStart)}</h2>
+                <p className="week-subtitle">Monday through Sunday · Focus calmly one day at a time</p>
               </div>
 
               <div className="week-controls">
