@@ -375,10 +375,10 @@ export function calcSuggestedBedtime(wakeUpTime, sleepHours) {
  */
 export function mapProfileToRoutineSettings(profile = {}, existingRoutine = null) {
   const dayStartTime = profile.wakeUpTime || existingRoutine?.dayStartTime || '08:00';
-  const dayEndTime = profile.windDownTime || existingRoutine?.dayEndTime || '21:00';
+  let dayEndTime = profile.windDownTime || existingRoutine?.dayEndTime || '21:00';
 
   const dayStartMin = timeToMinutes(dayStartTime);
-  const dayEndMin = timeToMinutes(dayEndTime);
+  let dayEndMin = timeToMinutes(dayEndTime);
 
   const blocks = [];
 
@@ -428,7 +428,11 @@ export function mapProfileToRoutineSettings(profile = {}, existingRoutine = null
   const dinnerStartMin = timeToMinutes(dinnerStart);
   const dinnerEndMin = dinnerStartMin + dinnerDur;
 
-  if (dinnerEnabled && dinnerStartMin >= dayStartMin && dinnerEndMin <= dayEndMin) {
+  if (dinnerEnabled && dinnerStartMin >= dayStartMin) {
+    if (dinnerEndMin > dayEndMin) {
+      dayEndMin = Math.min(23 * 60 + 59, dinnerEndMin);
+      dayEndTime = minutesToTime(dayEndMin);
+    }
     blocks.push({
       id: 'dinner',
       label: 'Dinner',

@@ -27,6 +27,7 @@ import {
   calcSuggestedBedtime,
   formatTimeDisplay,
   mapProfileToRoutineSettings,
+  minutesToTime,
   timeToMinutes,
 } from "./onboardingUtils";
 
@@ -132,6 +133,23 @@ const PREDICTABILITY_OPTIONS: Array<{
 
 const COMMON_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+const DINNER_PRESETS = [
+  { label: "7:00 – 7:30 PM", start: "19:00", end: "19:30" },
+  { label: "7:30 – 8:30 PM", start: "19:30", end: "20:30" },
+  { label: "8:00 – 8:30 PM", start: "20:00", end: "20:30" },
+  { label: "8:00 – 9:00 PM", start: "20:00", end: "21:00" },
+  { label: "8:30 – 9:30 PM", start: "20:30", end: "21:30" },
+  { label: "9:00 – 9:45 PM", start: "21:00", end: "21:45" },
+];
+
+const LUNCH_PRESETS = [
+  { label: "12:00 – 1:00 PM", start: "12:00", end: "13:00" },
+  { label: "12:30 – 1:30 PM", start: "12:30", end: "13:30" },
+  { label: "1:00 – 1:45 PM", start: "13:00", end: "13:45" },
+  { label: "1:00 – 2:00 PM", start: "13:00", end: "14:00" },
+  { label: "1:30 – 2:15 PM", start: "13:30", end: "14:15" },
+];
+
 export function PersonalizedOnboardingModal({
   isOpen,
   initialProfile,
@@ -152,6 +170,93 @@ export function PersonalizedOnboardingModal({
 
   const updateProfile = (updates: Partial<UserProfile>) => {
     setProfile((prev) => ({ ...prev, ...updates }));
+  };
+
+  // Auto-duration handlers to prevent invalid time errors & snap-back bugs
+  const handleDinnerStartChange = (newStart: string) => {
+    if (!newStart) {
+      updateProfile({ dinnerStartTime: "" });
+      return;
+    }
+    const currentStart = profile.dinnerStartTime || "19:00";
+    const currentEnd = profile.dinnerEndTime || "19:30";
+    let curDur = timeToMinutes(currentEnd) - timeToMinutes(currentStart);
+    if (curDur <= 0 || curDur > 240) curDur = 30;
+
+    const newStartM = timeToMinutes(newStart);
+    const newEndM = (newStartM + curDur) % 1440;
+    updateProfile({
+      dinnerStartTime: newStart,
+      dinnerEndTime: minutesToTime(newEndM),
+    });
+  };
+
+  const handleDinnerEndChange = (newEnd: string) => {
+    updateProfile({ dinnerEndTime: newEnd });
+  };
+
+  const setDinnerDuration = (durationMinutes: number) => {
+    const start = profile.dinnerStartTime || "19:00";
+    const startM = timeToMinutes(start);
+    const endM = (startM + durationMinutes) % 1440;
+    updateProfile({
+      dinnerStartTime: start,
+      dinnerEndTime: minutesToTime(endM),
+    });
+  };
+
+  const handleLunchStartChange = (newStart: string) => {
+    if (!newStart) {
+      updateProfile({ lunchStartTime: "" });
+      return;
+    }
+    const currentStart = profile.lunchStartTime || "13:00";
+    const currentEnd = profile.lunchEndTime || "14:00";
+    let curDur = timeToMinutes(currentEnd) - timeToMinutes(currentStart);
+    if (curDur <= 0 || curDur > 240) curDur = 60;
+
+    const newStartM = timeToMinutes(newStart);
+    const newEndM = (newStartM + curDur) % 1440;
+    updateProfile({
+      lunchStartTime: newStart,
+      lunchEndTime: minutesToTime(newEndM),
+    });
+  };
+
+  const handleLunchEndChange = (newEnd: string) => {
+    updateProfile({ lunchEndTime: newEnd });
+  };
+
+  const setLunchDuration = (durationMinutes: number) => {
+    const start = profile.lunchStartTime || "13:00";
+    const startM = timeToMinutes(start);
+    const endM = (startM + durationMinutes) % 1440;
+    updateProfile({
+      lunchStartTime: start,
+      lunchEndTime: minutesToTime(endM),
+    });
+  };
+
+  const handleCommitmentStartChange = (newStart: string) => {
+    if (!newStart) {
+      updateProfile({ commitmentStartTime: "" });
+      return;
+    }
+    const currentStart = profile.commitmentStartTime || "10:00";
+    const currentEnd = profile.commitmentEndTime || "16:00";
+    let curDur = timeToMinutes(currentEnd) - timeToMinutes(currentStart);
+    if (curDur <= 0 || curDur > 720) curDur = 360;
+
+    const newStartM = timeToMinutes(newStart);
+    const newEndM = (newStartM + curDur) % 1440;
+    updateProfile({
+      commitmentStartTime: newStart,
+      commitmentEndTime: minutesToTime(newEndM),
+    });
+  };
+
+  const handleCommitmentEndChange = (newEnd: string) => {
+    updateProfile({ commitmentEndTime: newEnd });
   };
 
   const handleNext = () => {
@@ -556,10 +661,15 @@ export function PersonalizedOnboardingModal({
                       <input
                         type="time"
                         className="wizard-time-input"
-                        value={profile.commitmentStartTime || "10:00"}
-                        onChange={(e) => updateProfile({ commitmentStartTime: e.target.value })}
+                        value={profile.commitmentStartTime ?? ""}
+                        onChange={(e) => handleCommitmentStartChange(e.target.value)}
                         aria-label="Commitment start time"
                       />
+                      {profile.commitmentStartTime && (
+                        <span className="time-ampm-hint">
+                          {formatTimeDisplay(profile.commitmentStartTime)}
+                        </span>
+                      )}
                     </div>
                     <span className="time-separator">to</span>
                     <div className="time-field">
@@ -567,10 +677,15 @@ export function PersonalizedOnboardingModal({
                       <input
                         type="time"
                         className="wizard-time-input"
-                        value={profile.commitmentEndTime || "16:00"}
-                        onChange={(e) => updateProfile({ commitmentEndTime: e.target.value })}
+                        value={profile.commitmentEndTime ?? ""}
+                        onChange={(e) => handleCommitmentEndChange(e.target.value)}
                         aria-label="Commitment end time"
                       />
+                      {profile.commitmentEndTime && (
+                        <span className="time-ampm-hint">
+                          {formatTimeDisplay(profile.commitmentEndTime)}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -700,28 +815,113 @@ export function PersonalizedOnboardingModal({
               </div>
 
               {profile.lunchOption === "fixed" && (
-                <div className="time-range-row standalone">
-                  <div className="time-field">
-                    <span>Lunch starts:</span>
-                    <input
-                      type="time"
-                      className="wizard-time-input"
-                      value={profile.lunchStartTime || "12:00"}
-                      onChange={(e) => updateProfile({ lunchStartTime: e.target.value })}
-                      aria-label="Lunch start time"
-                    />
+                <div className="meal-custom-box">
+                  <div className="meal-presets-bar">
+                    <span className="subbar-label">Popular lunch times:</span>
+                    <div className="subbar-pills">
+                      {LUNCH_PRESETS.map((p) => {
+                        const isSelected =
+                          profile.lunchStartTime === p.start &&
+                          profile.lunchEndTime === p.end;
+                        return (
+                          <button
+                            key={p.label}
+                            type="button"
+                            className={`sub-preset-pill ${isSelected ? "selected" : ""}`}
+                            onClick={() =>
+                              updateProfile({
+                                lunchStartTime: p.start,
+                                lunchEndTime: p.end,
+                              })
+                            }
+                          >
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <span className="time-separator">to</span>
-                  <div className="time-field">
-                    <span>Lunch ends:</span>
-                    <input
-                      type="time"
-                      className="wizard-time-input"
-                      value={profile.lunchEndTime || "13:00"}
-                      onChange={(e) => updateProfile({ lunchEndTime: e.target.value })}
-                      aria-label="Lunch end time"
-                    />
+
+                  <div className="time-range-row standalone">
+                    <div className="time-field">
+                      <span>Lunch starts:</span>
+                      <input
+                        type="time"
+                        className="wizard-time-input"
+                        value={profile.lunchStartTime ?? ""}
+                        onChange={(e) => handleLunchStartChange(e.target.value)}
+                        aria-label="Lunch start time"
+                      />
+                      {profile.lunchStartTime && (
+                        <span className="time-ampm-hint">
+                          {formatTimeDisplay(profile.lunchStartTime)}
+                        </span>
+                      )}
+                    </div>
+                    <span className="time-separator">to</span>
+                    <div className="time-field">
+                      <span>Lunch ends:</span>
+                      <input
+                        type="time"
+                        className="wizard-time-input"
+                        value={profile.lunchEndTime ?? ""}
+                        onChange={(e) => handleLunchEndChange(e.target.value)}
+                        aria-label="Lunch end time"
+                      />
+                      {profile.lunchEndTime && (
+                        <span className="time-ampm-hint">
+                          {formatTimeDisplay(profile.lunchEndTime)}
+                        </span>
+                      )}
+                    </div>
                   </div>
+
+                  <div className="duration-shortcut-bar">
+                    <span className="duration-label">Quick duration:</span>
+                    <div className="duration-pills">
+                      {[30, 45, 60].map((mins) => {
+                        const curDur =
+                          profile.lunchStartTime && profile.lunchEndTime
+                            ? timeToMinutes(profile.lunchEndTime) -
+                              timeToMinutes(profile.lunchStartTime)
+                            : 0;
+                        const isDurActive = curDur === mins;
+                        return (
+                          <button
+                            key={mins}
+                            type="button"
+                            className={`duration-pill-btn ${isDurActive ? "active" : ""}`}
+                            onClick={() => setLunchDuration(mins)}
+                          >
+                            {mins} min
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {profile.lunchStartTime && profile.lunchEndTime && (
+                    <div className="meal-live-summary">
+                      {timeToMinutes(profile.lunchStartTime) <
+                      timeToMinutes(profile.lunchEndTime) ? (
+                        <span>
+                          🍱 Lunch scheduled:{" "}
+                          <strong>
+                            {formatTimeDisplay(profile.lunchStartTime)} –{" "}
+                            {formatTimeDisplay(profile.lunchEndTime)}
+                          </strong>{" "}
+                          (
+                          {timeToMinutes(profile.lunchEndTime) -
+                            timeToMinutes(profile.lunchStartTime)}{" "}
+                          min)
+                        </span>
+                      ) : (
+                        <span className="meal-error-hint">
+                          ⚠️ Lunch start time must be earlier than end time.
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -793,28 +993,113 @@ export function PersonalizedOnboardingModal({
               </div>
 
               {profile.dinnerOption === "fixed" && (
-                <div className="time-range-row standalone">
-                  <div className="time-field">
-                    <span>Dinner starts:</span>
-                    <input
-                      type="time"
-                      className="wizard-time-input"
-                      value={profile.dinnerStartTime || "20:00"}
-                      onChange={(e) => updateProfile({ dinnerStartTime: e.target.value })}
-                      aria-label="Dinner start time"
-                    />
+                <div className="meal-custom-box">
+                  <div className="meal-presets-bar">
+                    <span className="subbar-label">Popular dinner times:</span>
+                    <div className="subbar-pills">
+                      {DINNER_PRESETS.map((p) => {
+                        const isSelected =
+                          profile.dinnerStartTime === p.start &&
+                          profile.dinnerEndTime === p.end;
+                        return (
+                          <button
+                            key={p.label}
+                            type="button"
+                            className={`sub-preset-pill ${isSelected ? "selected" : ""}`}
+                            onClick={() =>
+                              updateProfile({
+                                dinnerStartTime: p.start,
+                                dinnerEndTime: p.end,
+                              })
+                            }
+                          >
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <span className="time-separator">to</span>
-                  <div className="time-field">
-                    <span>Dinner ends:</span>
-                    <input
-                      type="time"
-                      className="wizard-time-input"
-                      value={profile.dinnerEndTime || "21:00"}
-                      onChange={(e) => updateProfile({ dinnerEndTime: e.target.value })}
-                      aria-label="Dinner end time"
-                    />
+
+                  <div className="time-range-row standalone">
+                    <div className="time-field">
+                      <span>Dinner starts:</span>
+                      <input
+                        type="time"
+                        className="wizard-time-input"
+                        value={profile.dinnerStartTime ?? ""}
+                        onChange={(e) => handleDinnerStartChange(e.target.value)}
+                        aria-label="Dinner start time"
+                      />
+                      {profile.dinnerStartTime && (
+                        <span className="time-ampm-hint">
+                          {formatTimeDisplay(profile.dinnerStartTime)}
+                        </span>
+                      )}
+                    </div>
+                    <span className="time-separator">to</span>
+                    <div className="time-field">
+                      <span>Dinner ends:</span>
+                      <input
+                        type="time"
+                        className="wizard-time-input"
+                        value={profile.dinnerEndTime ?? ""}
+                        onChange={(e) => handleDinnerEndChange(e.target.value)}
+                        aria-label="Dinner end time"
+                      />
+                      {profile.dinnerEndTime && (
+                        <span className="time-ampm-hint">
+                          {formatTimeDisplay(profile.dinnerEndTime)}
+                        </span>
+                      )}
+                    </div>
                   </div>
+
+                  <div className="duration-shortcut-bar">
+                    <span className="duration-label">Quick duration:</span>
+                    <div className="duration-pills">
+                      {[30, 45, 60, 90].map((mins) => {
+                        const curDur =
+                          profile.dinnerStartTime && profile.dinnerEndTime
+                            ? timeToMinutes(profile.dinnerEndTime) -
+                              timeToMinutes(profile.dinnerStartTime)
+                            : 0;
+                        const isDurActive = curDur === mins;
+                        return (
+                          <button
+                            key={mins}
+                            type="button"
+                            className={`duration-pill-btn ${isDurActive ? "active" : ""}`}
+                            onClick={() => setDinnerDuration(mins)}
+                          >
+                            {mins} min
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {profile.dinnerStartTime && profile.dinnerEndTime && (
+                    <div className="meal-live-summary">
+                      {timeToMinutes(profile.dinnerStartTime) <
+                      timeToMinutes(profile.dinnerEndTime) ? (
+                        <span>
+                          🍲 Dinner scheduled:{" "}
+                          <strong>
+                            {formatTimeDisplay(profile.dinnerStartTime)} –{" "}
+                            {formatTimeDisplay(profile.dinnerEndTime)}
+                          </strong>{" "}
+                          (
+                          {timeToMinutes(profile.dinnerEndTime) -
+                            timeToMinutes(profile.dinnerStartTime)}{" "}
+                          min)
+                        </span>
+                      ) : (
+                        <span className="meal-error-hint">
+                          ⚠️ Dinner start time must be earlier than end time.
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

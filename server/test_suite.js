@@ -1345,6 +1345,39 @@ async function runTests() {
   assert(emptyProfileRoutine.dayEndTime === '21:00', 'Default dayEndTime 21:00 used when profile is empty');
   assert(emptyProfileRoutine.blocks.length > 0, 'Default routine blocks used when profile is empty');
 
+  // 29i. Custom Late Dinner Times Automatically Expand dayEndTime & Protect Dinner Block
+  const lateDinnerProfile = {
+    name: 'Alex',
+    occupation: 'college',
+    sleepHours: 8,
+    wakeUpTime: '08:00',
+    hasCommitment: false,
+    lunchOption: 'fixed',
+    lunchStartTime: '12:30',
+    lunchEndTime: '13:30',
+    dinnerOption: 'fixed',
+    dinnerStartTime: '20:30',
+    dinnerEndTime: '21:30',
+    windDownTime: '21:00', // default wind-down earlier than dinner end
+  };
+
+  const lateDinnerRoutine = mapProfileToRoutineSettings(lateDinnerProfile);
+  assert(lateDinnerRoutine.dayEndTime === '21:30', 'Late dinner 20:30–21:30 auto-expands dayEndTime to 21:30');
+  const lateDinnerBlock = lateDinnerRoutine.blocks.find((b) => b.id === 'dinner');
+  assert(lateDinnerBlock && lateDinnerBlock.startTime === '20:30' && lateDinnerBlock.durationMinutes === 60, 'Dinner block 20:30–21:30 is preserved and protected');
+  const lateDinnerValidation = validateRoutineSettings(lateDinnerRoutine);
+  assert(lateDinnerValidation.isValid === true, 'Late dinner routine passes routine validation with 0 errors');
+
+  const lateDinnerPlan = createDailySchedule([
+    { id: 5001, title: 'Evening Study', estimatedMinutes: 120, scheduledDate: '2026-10-23', status: 'todo' }
+  ], {
+    currentDate: '2026-10-23',
+    horizon: 'today',
+    routineSettings: lateDinnerRoutine,
+  });
+  const taskInLateDinner = lateDinnerPlan.schedule.some((s) => s.type === 'task' && s.start >= '20:30' && s.start < '21:30');
+  assert(!taskInLateDinner, 'Zero tasks scheduled during custom protected Dinner (20:30–21:30)');
+
   console.log(`\n================================`);
   if (failures === 0) {
     console.log('🎉 ALL 29 TEST SUITES PASSED FLAWLESSLY!');

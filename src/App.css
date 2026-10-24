@@ -4702,6 +4702,109 @@ button.nav-item {
   border-color: #55794f;
 }
 
+.sub-preset-pill.selected {
+  background: #55794f;
+  color: #ffffff;
+  border-color: #55794f;
+}
+
+.meal-custom-box {
+  background: #f7faf4;
+  border: 1px solid #d8e4d2;
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.meal-presets-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subbar-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #5b7157;
+}
+
+.subbar-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.time-ampm-hint {
+  font-size: 11px;
+  font-weight: 600;
+  color: #4b6447;
+  background: #ebf3e7;
+  padding: 2px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+.duration-shortcut-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.duration-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #5b7157;
+}
+
+.duration-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.duration-pill-btn {
+  background: #ffffff;
+  border: 1px solid #d0dcce;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4a6146;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.duration-pill-btn:hover {
+  background: #ebf3e7;
+  border-color: #55794f;
+}
+
+.duration-pill-btn.active {
+  background: #395234;
+  color: #ffffff;
+  border-color: #395234;
+}
+
+.meal-live-summary {
+  font-size: 11.5px;
+  color: #2e442a;
+  background: #eef6ec;
+  border: 1px dashed #b9d2b2;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+.meal-error-hint {
+  color: #b33939;
+  font-weight: 600;
+}
+
+
 .days-selector-wrap {
   display: flex;
   align-items: center;
